@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LOJO — Поселение</title>
+  <title>LOJO</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -14,10 +14,10 @@
     <div class="boot__atmosphere" aria-hidden="true"></div>
     <div class="boot__content">
       <p class="boot__brand">LOJO</p>
-      <h1 class="boot__title">Маленький мир больших дел</h1>
-      <p class="boot__lead">Поселенцы рубят лес, собирают ягоды, строят дома и переживают ночь. Ты задаёшь курс — они живут.</p>
+      <h1 class="boot__title">Они живут сами</h1>
+      <p class="boot__lead">Поселенцы сами строят, добывают и воюют. Ты — бог песочницы: рисуй мир и смотри.</p>
       <div class="boot__actions">
-        <button type="button" id="btn-start" class="btn btn--primary">Начать поселение</button>
+        <button type="button" id="btn-start" class="btn btn--primary">Сотворить мир</button>
         <button type="button" id="btn-howto" class="btn btn--ghost">Как играть</button>
       </div>
     </div>
@@ -27,64 +27,73 @@
     <div class="modal__panel">
       <h2 id="howto-title">Как играть</h2>
       <ul>
-        <li><strong>ЛКМ</strong> — поставить здание или выделить объект</li>
-        <li><strong>ПКМ / перетаскивание</strong> — двигать камеру</li>
-        <li><strong>Колёсико</strong> — масштаб</li>
-        <li><strong>WASD</strong> — панорама</li>
-        <li>Поселенцы сами едят, спят и берут работу из очереди</li>
-        <li>Дома дают укрытие ночью, фермы — еду, склады хранят ресурсы</li>
+        <li>NPC помнят помощь и жестокость богов, сплетничают и ссорятся</li>
+        <li>Просят поручения: еда, защита, исцеление — выполняй силами бога</li>
+        <li>В бою: бегут, зовут стражу, прячутся за стенами, бьют оружием</li>
+        <li>ЛКМ — сила · ПКМ — камера · WASD · колёсико — зум</li>
       </ul>
       <button type="button" id="btn-howto-close" class="btn btn--primary">Понятно</button>
     </div>
   </div>
 
   <div id="game-shell" class="game-shell hidden">
-    <header class="hud-top">
+    <header class="topbar">
       <div class="brand-mark">LOJO</div>
-      <div class="res-bar" id="res-bar">
-        <span class="res" data-res="food" title="Еда"><i class="ico ico-food"></i><b id="res-food">0</b></span>
-        <span class="res" data-res="wood" title="Дерево"><i class="ico ico-wood"></i><b id="res-wood">0</b></span>
-        <span class="res" data-res="stone" title="Камень"><i class="ico ico-stone"></i><b id="res-stone">0</b></span>
-        <span class="res" data-res="people" title="Люди"><i class="ico ico-people"></i><b id="res-people">0</b></span>
+      <div class="res-bar">
+        <span class="res" title="Еда"><i class="ico ico-food"></i><b id="res-food">0</b></span>
+        <span class="res" title="Дерево"><i class="ico ico-wood"></i><b id="res-wood">0</b></span>
+        <span class="res" title="Камень"><i class="ico ico-stone"></i><b id="res-stone">0</b></span>
+        <span class="res" title="Люди"><i class="ico ico-people"></i><b id="res-people">0</b></span>
       </div>
-      <div class="clock">
-        <span id="day-label">День 1</span>
-        <span id="time-label">Утро</span>
-        <div class="day-meter"><div id="day-fill" class="day-meter__fill"></div></div>
+      <div class="topbar-right">
+        <div class="speed-row" id="speeds">
+          <button type="button" class="speed" data-speed="0">II</button>
+          <button type="button" class="speed active" data-speed="1">1x</button>
+          <button type="button" class="speed" data-speed="2">2x</button>
+          <button type="button" class="speed" data-speed="3">3x</button>
+        </div>
+        <div class="clock">
+          <span id="day-label">День 1</span>
+          <span id="time-label">Утро</span>
+          <div class="day-meter"><div id="day-fill" class="day-meter__fill"></div></div>
+        </div>
       </div>
     </header>
 
     <canvas id="world" width="1280" height="720"></canvas>
 
-    <aside class="hud-side">
-      <p class="hud-side__label">Строить</p>
-      <div class="tool-grid" id="tools">
-        <button type="button" class="tool active" data-tool="select" title="Выбор"><span class="tool-ico tool-ico--select"></span><span>Выбор</span></button>
-        <button type="button" class="tool" data-tool="hut" title="Домик — 12 дерева"><span class="tool-ico tool-ico--hut"></span><span>Домик</span></button>
-        <button type="button" class="tool" data-tool="farm" title="Грядка — 6 дерева"><span class="tool-ico tool-ico--farm"></span><span>Грядка</span></button>
-        <button type="button" class="tool" data-tool="stockpile" title="Склад — 8 дерева"><span class="tool-ico tool-ico--stock"></span><span>Склад</span></button>
-        <button type="button" class="tool" data-tool="chop" title="Рубить дерево"><span class="tool-ico tool-ico--chop"></span><span>Рубка</span></button>
-        <button type="button" class="tool" data-tool="gather" title="Собрать ягоды"><span class="tool-ico tool-ico--gather"></span><span>Ягоды</span></button>
-        <button type="button" class="tool" data-tool="mine" title="Добыть камень"><span class="tool-ico tool-ico--mine"></span><span>Камень</span></button>
-      </div>
-      <p class="hud-side__hint" id="tool-hint">Выбери действие и кликни по карте</p>
+    <p class="status-line" id="status-line">Колония работает сама</p>
 
-      <p class="hud-side__label">Скорость</p>
-      <div class="speed-row">
-        <button type="button" class="speed" data-speed="0" title="Пауза">II</button>
-        <button type="button" class="speed active" data-speed="1" title="Обычная">1x</button>
-        <button type="button" class="speed" data-speed="2" title="Быстрее">2x</button>
-        <button type="button" class="speed" data-speed="3" title="Очень быстро">3x</button>
-      </div>
-
-      <button type="button" id="btn-recruit" class="btn btn--recruit">Призвать поселенца<br /><small>20 еды · нужен дом</small></button>
-    </aside>
-
-    <section class="inspect" id="inspect">
-      <h3 id="inspect-title">Поселение</h3>
-      <p id="inspect-body">Кликни по человеку или зданию, чтобы узнать детали.</p>
+    <section class="inspect hidden" id="inspect">
+      <button type="button" class="inspect-close" id="inspect-close" aria-label="Закрыть">×</button>
+      <h3 id="inspect-title">Мир</h3>
+      <p id="inspect-body"></p>
       <div id="inspect-bars" class="inspect-bars hidden"></div>
     </section>
+
+    <nav class="god-bar" id="god-bar">
+      <div class="god-tabs" id="god-tabs">
+        <button type="button" class="god-tab" data-tab="world">Мир</button>
+        <button type="button" class="god-tab active" data-tab="life">Жизнь</button>
+        <button type="button" class="god-tab" data-tab="war">Война</button>
+        <button type="button" class="god-tab" data-tab="chaos">Хаос</button>
+      </div>
+      <div class="war-subs hidden" id="war-subs">
+        <button type="button" class="war-sub active" data-war="build">Стройки</button>
+        <button type="button" class="war-sub" data-war="doctrine">Доктрины</button>
+        <button type="button" class="war-sub" data-war="cmd">Команды</button>
+      </div>
+      <div class="god-tools" id="god-tools"></div>
+      <div class="god-meta">
+        <div class="brush-row" id="brush-sizes">
+          <span class="brush-label">Кисть</span>
+          <button type="button" class="brush active" data-brush="0">1</button>
+          <button type="button" class="brush" data-brush="1">3</button>
+          <button type="button" class="brush" data-brush="2">5</button>
+        </div>
+        <p class="tool-hint" id="tool-hint">Выбери силу</p>
+      </div>
+    </nav>
 
     <div class="toast-stack" id="toasts" aria-live="polite"></div>
   </div>
