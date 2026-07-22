@@ -1,4 +1,19 @@
+import {
+  alliesNearby,
+  decideGoal,
+  fleePoint,
+  nearestThreat,
+  rollPersonality,
+  roleLabel,
+  senseWorld,
+} from "./brain.js";
 import { BUILD_TIME, YIELD } from "./config.js";
+import {
+  createLifeState,
+  findShelterSpot,
+  schedulePhase,
+  updateLivingNeeds,
+} from "./life.js";
 import {
   findPath,
   inBounds,
@@ -18,6 +33,7 @@ let nameIdx = 0;
 export function createSettler(x, y, id) {
   const name = NAMES[nameIdx % NAMES.length];
   nameIdx++;
+  const personality = rollPersonality(id);
   return {
     id,
     name,
@@ -29,9 +45,19 @@ export function createSettler(x, y, id) {
     job: null,
     path: [],
     workTimer: 0,
+    attackTimer: 0,
     state: "idle",
     bob: Math.random() * Math.PI * 2,
     thought: "осматривается",
+    life: createLifeState(id),
+    brain: {
+      ...personality,
+      goal: null,
+      commit: 0,
+      thinkCd: Math.random() * 0.4,
+      targetId: null,
+      roleName: roleLabel(personality.role),
+    },
   };
 }
 
@@ -39,10 +65,18 @@ export function bindSettler(s, game) {
   s._game = game;
 }
 
+/** Shared sense rebuilt once per tick for all settlers */
+export function beginSettlerThink(game) {
+  game._sense = senseWorld(game);
+}
+
 export function updateSettler(s, dt, game) {
   s.bob += dt * 6;
   s.hunger = Math.max(0, s.hunger - dt * 1.35);
   s.energy = Math.max(0, s.energy - dt * (game.isNight ? 2.2 : 0.55));
+  s.attackTimer = Math.max(0, s.attackTimer - dt);
+  s.brain.commit = Math.max(0, s.brain.commit - dt);
+  s.brain.thinkCd -= dt;
 
   if (s.hunger <= 0) {
     s.state = "die";
@@ -51,22 +85,29 @@ export function updateSettler(s, dt, game) {
     s.path = [];
     return;
   }
-
   if (s.state === "die") return;
 
-  if (s.state !== "eat" && s.state !== "sleep" && s.state !== "work") {
-    if (s.hunger < 28) {
-      tryEat(s, game);
-      if (s.state === "eat" || s.state === "walk") return;
-    }
-    if ((game.isNight || s.energy < 22) && s.energy < 60) {
-      trySleep(s, game);
-      if (s.state === "sleep" || s.state === "walk") return;
+  const sense = game._sense || senseWorld(game);
+  updateLivingNeeds(s, dt, game, sense);
+
+  // Interrupt dangerous situations even mid-walk (not mid-eat finishing bite)
+  if (s.state !== "eat" && s.state !== "sleep" && s.state !== "chat") {
+    const hereFire = tileFire(game, s.x, s.y);
+    if (hereFire > 0.35) {
+      enactFleeFire(s, game);
     }
   }
 
   if (s.state === "walk") {
-    advancePath(s, dt, 2.5);
+    if (s.brain.thinkCd <= 0 && s.brain.goal && !["flee", "flee_fire", "fight", "eat", "sleep", "shelter"].includes(s.brain.goal.type)) {
+      s.brain.thinkCd = 0.45;
+      const threat = nearestThreat(sense, s.x, s.y, 4.2);
+      if (threat && s.brain.traits.bravery < 0.7) {
+        think(s, game, sense);
+      }
+    }
+    const speed = moveSpeed(s);
+    advancePath(s, dt, speed);
     if (!s.path.length) onArrived(s, game);
     return;
   }
@@ -76,38 +117,361 @@ export function updateSettler(s, dt, game) {
     return;
   }
 
+  if (s.state === "fight") {
+    doFight(s, dt, game, sense);
+    return;
+  }
+
+  if (s.state === "chat") {
+    s.workTimer -= dt;
+    s.energy = Math.min(100, s.energy + dt * 2);
+    if (s.life) {
+      s.life.mood = Math.min(1, s.life.mood + dt * 0.08);
+      s.life.socialNeed = Math.max(0, s.life.socialNeed - dt * 0.35);
+      s.life.joy = Math.min(1, s.life.joy + dt * 0.05);
+    }
+    const partner = game.settlers.find((o) => o.id === s.brain.targetId);
+    if (partner && partner.state !== "die") {
+      s.thought = CHAT_LINES[(s.id + (partner.id | 0) + ((s.workTimer * 3) | 0)) % CHAT_LINES.length]
+        .replace("{name}", partner.name);
+    }
+    if (s.workTimer <= 0) {
+      if (partner?.life && s.life) {
+        s.life.bonds[partner.id] = Math.min(1, (s.life.bonds[partner.id] || 0) + 0.12);
+        partner.life.bonds[s.id] = Math.min(1, (partner.life.bonds[s.id] || 0) + 0.12);
+        partner.life.chatCd = 3;
+      }
+      if (s.life) s.life.chatCd = 4;
+      s.state = "idle";
+      s.brain.commit = 0;
+      s.thought = "тепло попрощался";
+    }
+    return;
+  }
+
   if (s.state === "eat") {
     s.workTimer -= dt;
     s.hunger = Math.min(100, s.hunger + dt * 28);
     s.thought = "ест";
+    if (s.life) s.life.mood = Math.min(1, s.life.mood + dt * 0.04);
     if (s.workTimer <= 0 || s.hunger >= 92) {
       s.state = "idle";
       s.thought = "сыт";
+      s.brain.commit = 0;
     }
     return;
   }
 
   if (s.state === "sleep") {
-    const indoors = s.job?.type === "sleep" || s.thought.includes("домик");
+    const indoors = s.thought.includes("домик") || s.thought.includes("укрытии");
     s.energy = Math.min(100, s.energy + dt * (indoors ? 20 : 10));
     s.hunger = Math.max(0, s.hunger - dt * 0.35);
-    if (!game.isNight && s.energy > 85) {
+    if (s.life) {
+      s.life.wet = Math.max(0, s.life.wet - dt * 0.2);
+      s.life.fear = Math.max(0, s.life.fear - dt * 0.06);
+    }
+    const threat = nearestThreat(sense, s.x, s.y, 3.5);
+    if (threat && s.brain.traits.bravery > 0.4) {
+      s.state = "idle";
+      s.job = null;
+      s.thought = "проснулся от шума";
+      s.brain.commit = 0;
+      return;
+    }
+    const phase = schedulePhase(game.dayPhase);
+    // Wake with the morning schedule, or when fully rested in daytime
+    if ((phase.id === "dawn" || phase.id === "morning") && s.energy > 55) {
+      s.state = "idle";
+      s.thought = "просыпается на рассвете";
+      s.job = null;
+      s.brain.commit = 0;
+      if (s.life) s.life.mood = Math.min(1, s.life.mood + 0.08);
+    } else if (!game.isNight && s.energy > 90 && phase.rest < 0.5) {
       s.state = "idle";
       s.thought = "проснулся";
       s.job = null;
+      s.brain.commit = 0;
     }
     return;
   }
 
-  if (!s.job) {
-    const job = claimJob(game);
-    if (job) {
-      job.claimedBy = s.id;
-      assignJob(s, job, game);
-      return;
-    }
-    autoSurvive(s, game);
+  if (s.brain.thinkCd <= 0 || !s.brain.goal || s.brain.commit <= 0) {
+    think(s, game, sense);
   }
+}
+
+const CHAT_LINES = [
+  "спрашивает {name} про урожай",
+  "смеётся с {name}",
+  "жалуется {name} на погоду",
+  "делится новостями с {name}",
+  "спорит с {name} о запасах",
+  "хвалит работу {name}",
+];
+
+function think(s, game, sense) {
+  s.brain.thinkCd = 0.35 + Math.random() * 0.25;
+  const goal = decideGoal(s, game, sense);
+  s.brain.goal = goal;
+  // Social chats and shelter need longer commitment so work doesn't instantly steal focus
+  const commitBonus =
+    goal.type === "socialize" ? 2.2 :
+    goal.type === "shelter" || goal.type === "sleep" ? 1.5 :
+    goal.type === "chat" ? 2 : 0;
+  s.brain.commit = 1.2 + s.brain.traits.diligence + commitBonus;
+  s.thought = goal.thought;
+  executeGoal(s, game, sense, goal);
+}
+
+function executeGoal(s, game, sense, goal) {
+  switch (goal.type) {
+    case "eat":
+      tryEat(s, game);
+      break;
+    case "sleep":
+      trySleep(s, game);
+      break;
+    case "shelter":
+      startShelter(s, game, goal.payload);
+      break;
+    case "socialize":
+      startSocialize(s, game, goal.payload?.partnerId);
+      break;
+    case "close_gate":
+      startCloseGate(s, game, goal.payload?.gate);
+      break;
+    case "tend_farm":
+      startTendFarm(s, game, goal.payload?.farm);
+      break;
+    case "craft":
+      startCraft(s, game);
+      break;
+    case "trade":
+      startTrade(s, game);
+      break;
+    case "flee":
+      enactFlee(s, game, sense, goal.payload?.fromId);
+      break;
+    case "flee_fire":
+      enactFleeFire(s, game);
+      break;
+    case "fight":
+      startFight(s, game, goal.payload?.targetId);
+      break;
+    case "job":
+      if (goal.payload?.job) {
+        goal.payload.job.claimedBy = s.id;
+        assignJob(s, goal.payload.job, game);
+      }
+      break;
+    case "forage":
+      startAutoResource(s, game, "bush", "gather", true);
+      break;
+    case "chop_auto":
+      startAutoResource(s, game, "tree", "chop", false);
+      break;
+    case "mine_auto":
+      startAutoResource(s, game, "rock", "mine", false);
+      break;
+    case "hunt":
+      startHunt(s, game, sense);
+      break;
+    case "loot":
+      startLoot(s, game, sense);
+      break;
+    case "patrol":
+      startPatrol(s, game);
+      break;
+    case "hold_wall":
+      holdWall(s, game);
+      break;
+    case "flank_move":
+      flankMove(s, game, sense);
+      break;
+    case "ambush_pos":
+      ambushPos(s, game);
+      break;
+    case "idle_near":
+    default:
+      softWander(s, game, sense);
+      break;
+  }
+}
+
+function startShelter(s, game, payload) {
+  const spot = payload || findShelterSpot(game, s);
+  if (!spot) {
+    trySleep(s, game);
+    return;
+  }
+  const job = { type: "shelter", x: spot.x, y: spot.y, claimedBy: s.id, auto: true };
+  s.job = job;
+  goToTile(s, game, spot.x, spot.y);
+  s.thought = "ищет укрытие";
+}
+
+function startSocialize(s, game, partnerId) {
+  const partner = game.settlers.find((o) => o.id === partnerId && o.state !== "die");
+  if (!partner) {
+    softWander(s, game, game._sense || senseWorld(game));
+    return;
+  }
+  // Mutual meetup — pull partner out of low-priority work
+  if (partner.state !== "fight" && partner.state !== "sleep" && partner.state !== "chat") {
+    if (partner.job && partner.job.type !== "social") releaseJob(partner, game);
+    partner.path = [];
+    partner.brain.goal = { type: "socialize", thought: `идёт к ${s.name}`, payload: { partnerId: s.id } };
+    partner.brain.commit = 3;
+    partner.brain.targetId = s.id;
+    partner.thought = `идёт к ${s.name}`;
+  }
+
+  s.brain.targetId = partner.id;
+  const mx = Math.round((s.x + partner.x) / 2);
+  const my = Math.round((s.y + partner.y) / 2);
+  const meet = walkable(game.world, mx, my) ? { x: mx, y: my } : { x: Math.floor(partner.x), y: Math.floor(partner.y) };
+
+  s.job = { type: "social", x: meet.x, y: meet.y, claimedBy: s.id, auto: true, partnerId: partner.id };
+  goToTile(s, game, meet.x, meet.y);
+  s.thought = `ищет ${partner.name}`;
+
+  if (partner.state !== "fight" && partner.state !== "sleep" && partner.state !== "chat") {
+    partner.job = { type: "social", x: meet.x, y: meet.y, claimedBy: partner.id, auto: true, partnerId: s.id };
+    goToTile(partner, game, meet.x, meet.y);
+  }
+}
+
+function startCloseGate(s, game, gate) {
+  if (!gate || gate.shut) {
+    startPatrol(s, game);
+    return;
+  }
+  const spot = adjacentSpot(game.world, gate.x, gate.y, s.x, s.y);
+  if (!spot) return;
+  s.job = { type: "close_gate", x: gate.x, y: gate.y, claimedBy: s.id, auto: true, gate };
+  goToTile(s, game, spot.x, spot.y);
+  s.thought = "идёт закрыть ворота";
+}
+
+function startTendFarm(s, game, farm) {
+  if (!farm) return;
+  const spot = adjacentSpot(game.world, farm.x, farm.y, s.x, s.y);
+  if (!spot) return;
+  s.job = { type: "tend_farm", x: farm.x, y: farm.y, claimedBy: s.id, auto: true, farm };
+  goToTile(s, game, spot.x, spot.y);
+  s.thought = "идёт на грядку";
+}
+
+function startCraft(s, game) {
+  const stock = nearestBuilding(game.world, s.x, s.y, "stockpile", true)
+    || nearestBuilding(game.world, s.x, s.y, "barracks", true);
+  if (!stock) {
+    startAutoResource(s, game, "tree", "chop", false);
+    return;
+  }
+  const spot = adjacentSpot(game.world, stock.x, stock.y, s.x, s.y);
+  if (!spot) return;
+  s.job = { type: "craft", x: stock.x, y: stock.y, claimedBy: s.id, auto: true };
+  goToTile(s, game, spot.x, spot.y);
+  s.thought = "идёт к верстаку";
+}
+
+function startTrade(s, game) {
+  const stock = nearestBuilding(game.world, s.x, s.y, "stockpile", true);
+  if (!stock) {
+    softWander(s, game, game._sense || senseWorld(game));
+    return;
+  }
+  const spot = adjacentSpot(game.world, stock.x, stock.y, s.x, s.y);
+  if (!spot) return;
+  s.job = { type: "trade", x: stock.x, y: stock.y, claimedBy: s.id, auto: true };
+  goToTile(s, game, spot.x, spot.y);
+  s.thought = "открывает торговлю";
+}
+
+function holdWall(s, game) {
+  // Stand near wall/gate/tower
+  let best = null;
+  let bestD = Infinity;
+  for (let y = 0; y < game.world.terrain.length; y++) {
+    for (let x = 0; x < game.world.terrain[0].length; x++) {
+      const b = game.world.buildings[y][x];
+      if (!b?.done) continue;
+      if (b.type !== "wall" && b.type !== "gate" && b.type !== "tower") continue;
+      const spot = adjacentSpot(game.world, x, y, s.x, s.y);
+      if (!spot) continue;
+      const d = Math.hypot(spot.x - s.x, spot.y - s.y);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+  }
+  if (best) {
+    s.job = { type: "wander", x: best.x, y: best.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, best.x, best.y);
+    s.thought = "держит оборону";
+  } else {
+    startPatrol(s, game);
+  }
+}
+
+function flankMove(s, game, sense) {
+  const threat = nearestThreat(sense, s.x, s.y, 14);
+  if (!threat) {
+    startPatrol(s, game);
+    return;
+  }
+  const ang = Math.atan2(threat.unit.y - s.y, threat.unit.x - s.x) + (s.id % 2 === 0 ? 1.2 : -1.2);
+  const tx = Math.round(threat.unit.x + Math.cos(ang) * 3);
+  const ty = Math.round(threat.unit.y + Math.sin(ang) * 3);
+  if (walkable(game.world, tx, ty)) {
+    s.job = { type: "wander", x: tx, y: ty, claimedBy: s.id, auto: true };
+    goToTile(s, game, tx, ty);
+    s.thought = "заходит с фланга";
+  } else {
+    startFight(s, game, threat.unit.id);
+  }
+}
+
+function ambushPos(s, game) {
+  let best = null;
+  let bestD = 10;
+  for (let y = 0; y < game.world.terrain.length; y++) {
+    for (let x = 0; x < game.world.terrain[0].length; x++) {
+      if (game.world.resources[y][x].kind !== "tree") continue;
+      const spot = adjacentSpot(game.world, x, y, s.x, s.y);
+      if (!spot) continue;
+      const d = Math.hypot(spot.x - s.x, spot.y - s.y);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+  }
+  if (best) {
+    s.job = { type: "wander", x: best.x, y: best.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, best.x, best.y);
+    s.thought = "в засаде";
+  }
+}
+
+function moveSpeed(s) {
+  let spd = 2.55;
+  if (s.brain.goal?.type === "flee" || s.brain.goal?.type === "flee_fire") spd = 3.4;
+  if (s.brain.goal?.type === "fight") spd = 2.9;
+  if (s.brain.goal?.type === "shelter") spd = 3.1;
+  if (s.energy < 25) spd *= 0.85;
+  if (s.life?.wet > 0.5) spd *= 0.9;
+  if (s.brain.role === "hunter" || s.brain.role === "guard") spd *= 1.06;
+  return spd;
+}
+
+function tileFire(game, x, y) {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  if (!inBounds(tx, ty)) return 0;
+  return game.world.fire[ty][tx] || 0;
 }
 
 function tryEat(s, game) {
@@ -119,16 +483,8 @@ function tryEat(s, game) {
     s.thought = "берёт еду со склада";
     return;
   }
-  const bush = nearestResource(game.world, s.x, s.y, "bush");
-  if (bush) {
-    game.world.resources[bush.y][bush.x].reserved = true;
-    const job = { type: "gather", x: bush.x, y: bush.y, claimedBy: s.id, auto: true, autoEat: true };
-    game.jobs.push(job);
-    assignJob(s, job, game);
-    s.thought = "ищет ягоды";
-  } else {
-    s.thought = "нет еды!";
-  }
+  startAutoResource(s, game, "bush", "gather", true);
+  if (s.state === "idle") s.thought = "нет еды!";
 }
 
 function trySleep(s, game) {
@@ -147,6 +503,219 @@ function trySleep(s, game) {
   s.thought = "спит под открытым небом";
 }
 
+function enactFlee(s, game, sense, fromId) {
+  releaseJob(s, game);
+  const threat = sense.threats.find((t) => t.id === fromId) || nearestThreat(sense, s.x, s.y, 9)?.unit;
+  if (!threat) {
+    softWander(s, game, sense);
+    return;
+  }
+  // Prefer fleeing toward allies
+  const allies = alliesNearby(sense, s.x, s.y, 10).filter((a) => a.id !== s.id);
+  let dest = fleePoint(game.world, s.x, s.y, threat.x, threat.y);
+  if (allies.length) {
+    const a = allies[0];
+    const candid = fleePoint(game.world, a.x, a.y, threat.x, threat.y);
+    if (candid) dest = candid;
+  }
+  if (dest) {
+    s.job = { type: "wander", x: dest.x, y: dest.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, dest.x, dest.y);
+    s.thought = "убегает";
+  }
+}
+
+function enactFleeFire(s, game) {
+  releaseJob(s, game);
+  const dest = fleePoint(game.world, s.x, s.y, s.x, s.y);
+  // Pick coolest nearby tile
+  let best = dest;
+  let bestFire = 99;
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = Math.floor(s.x) + dx;
+      const y = Math.floor(s.y) + dy;
+      if (!walkable(game.world, x, y)) continue;
+      const f = game.world.fire[y][x];
+      if (f < bestFire) {
+        bestFire = f;
+        best = { x, y };
+      }
+    }
+  }
+  if (best) {
+    s.brain.goal = { type: "flee_fire", thought: "горит!" };
+    s.job = { type: "wander", x: best.x, y: best.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, best.x, best.y);
+    s.thought = "горит!";
+  }
+}
+
+function startFight(s, game, targetId) {
+  releaseJob(s, game);
+  s.brain.targetId = targetId;
+  s.state = "fight";
+  s.thought = "в бою";
+}
+
+function doFight(s, dt, game, sense) {
+  let target = game.creatures.find((c) => c.id === s.brain.targetId && !c.dead);
+  if (!target) {
+    const t = nearestThreat(sense, s.x, s.y, 6);
+    target = t?.unit || null;
+  }
+  if (!target) {
+    s.state = "idle";
+    s.brain.commit = 0;
+    s.thought = "угроза ушла";
+    return;
+  }
+
+  const dist = Math.hypot(target.x - s.x, target.y - s.y);
+  if (dist > 1.0) {
+    // Steer toward target with short path refreshes
+    s.brain.thinkCd -= dt;
+    if (!s.path.length || s.brain.thinkCd <= 0) {
+      s.brain.thinkCd = 0.35;
+      goToTile(s, game, Math.floor(target.x), Math.floor(target.y));
+    }
+    if (s.state === "walk") {
+      advancePath(s, dt, moveSpeed(s));
+      s.state = "fight";
+    } else {
+      // Direct step if path failed
+      const dx = target.x - s.x;
+      const dy = target.y - s.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const nx = s.x + (dx / d) * 2.8 * dt;
+      const ny = s.y + (dy / d) * 2.8 * dt;
+      if (walkable(game.world, Math.floor(nx), Math.floor(ny))) {
+        s.x = nx;
+        s.y = ny;
+      }
+    }
+    s.thought = target.kind === "bandit" ? "догоняет бандита" : "догоняет волка";
+    return;
+  }
+
+  if (s.attackTimer <= 0) {
+    s.attackTimer = 0.7;
+    const dmg = 14 + s.brain.traits.bravery * 12 + (s.brain.role === "guard" ? 8 : 0) + (s.brain.role === "hunter" ? 6 : 0);
+    target.hp -= dmg;
+    s.energy = Math.max(0, s.energy - 4);
+    s.thought = "бьёт";
+    game.fx.push({ kind: "spark", x: target.x, y: target.y, life: 0.25, max: 0.25, seed: Math.random() * 100 });
+    if (target.hp <= 0) {
+      target.dead = true;
+      game.toast(`${s.name} победил${nameEnding(s.name)} ${target.kind === "bandit" ? "бандита" : "волка"}`);
+      if (target.kind === "wolf" || target.kind === "bandit") {
+        game.stock.food += target.kind === "wolf" ? 3 : 2;
+      }
+      s.state = "idle";
+      s.brain.commit = 0;
+      s.thought = "победа";
+    }
+  }
+}
+
+function startHunt(s, game, sense) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const p of sense.prey) {
+    const d = Math.hypot(p.x - s.x, p.y - s.y);
+    if (d > 14) continue;
+    const score = 20 - d + (s.brain.role === "hunter" ? 10 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  if (!best) {
+    startAutoResource(s, game, "bush", "gather", false);
+    return;
+  }
+  s.brain.targetId = best.id;
+  s.job = { type: "hunt", x: Math.floor(best.x), y: Math.floor(best.y), claimedBy: s.id, auto: true, preyId: best.id };
+  goToTile(s, game, Math.floor(best.x), Math.floor(best.y));
+  s.thought = "охотится на кролика";
+}
+
+function startLoot(s, game, sense) {
+  let best = null;
+  let bestD = Infinity;
+  for (const c of sense.corpses) {
+    const d = Math.hypot(c.x - s.x, c.y - s.y);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  if (!best) {
+    softWander(s, game, sense);
+    return;
+  }
+  s.job = { type: "loot", x: Math.floor(best.x), y: Math.floor(best.y), claimedBy: s.id, auto: true, corpseId: best.id };
+  goToTile(s, game, Math.floor(best.x), Math.floor(best.y));
+  s.thought = "идёт к добыче";
+}
+
+function startPatrol(s, game) {
+  const stock = nearestBuilding(game.world, s.x, s.y, "stockpile", true);
+  const baseX = stock ? stock.x : (MAP_MID().x);
+  const baseY = stock ? stock.y : (MAP_MID().y);
+  const ang = Math.random() * Math.PI * 2;
+  const tx = Math.round(baseX + Math.cos(ang) * (3 + Math.random() * 4));
+  const ty = Math.round(baseY + Math.sin(ang) * (3 + Math.random() * 4));
+  if (walkable(game.world, tx, ty)) {
+    s.job = { type: "wander", x: tx, y: ty, claimedBy: s.id, auto: true };
+    goToTile(s, game, tx, ty);
+    s.thought = "патрулирует";
+  }
+}
+
+function MAP_MID() {
+  return { x: 36, y: 26 };
+}
+
+function softWander(s, game, sense) {
+  // Prefer staying near allies / camp
+  const allies = alliesNearby(sense, s.x, s.y, 12).filter((a) => a.id !== s.id);
+  let ox = 0;
+  let oy = 0;
+  if (allies.length) {
+    for (const a of allies) {
+      ox += a.x;
+      oy += a.y;
+    }
+    ox /= allies.length;
+    oy /= allies.length;
+  } else {
+    const m = MAP_MID();
+    ox = m.x;
+    oy = m.y;
+  }
+  const tx = Math.round(ox + (Math.random() - 0.5) * 5);
+  const ty = Math.round(oy + (Math.random() - 0.5) * 5);
+  if (walkable(game.world, tx, ty) && Math.random() < 0.4) {
+    s.job = { type: "wander", x: tx, y: ty, claimedBy: s.id, auto: true };
+    goToTile(s, game, tx, ty);
+    s.thought = "рядом с своими";
+  } else {
+    s.thought = "осматривается";
+  }
+}
+
+function startAutoResource(s, game, kind, jobType, autoEat) {
+  const spot = nearestResource(game.world, s.x, s.y, kind);
+  if (!spot) return;
+  // Skip if on fire
+  if ((game.world.fire[spot.y][spot.x] || 0) > 0.3) return;
+  game.world.resources[spot.y][spot.x].reserved = true;
+  const job = { type: jobType, x: spot.x, y: spot.y, claimedBy: s.id, auto: true, autoEat };
+  game.jobs.push(job);
+  assignJob(s, job, game);
+}
+
 function adjacentSpot(world, tx, ty, fromX, fromY) {
   const opts = [];
   for (let dy = -1; dy <= 1; dy++) {
@@ -163,15 +732,6 @@ function adjacentSpot(world, tx, ty, fromX, fromY) {
   return opts[0] || null;
 }
 
-function claimJob(game) {
-  const order = ["build", "chop", "gather", "mine", "harvest"];
-  for (const type of order) {
-    const job = game.jobs.find((j) => j.type === type && !j.claimedBy);
-    if (job) return job;
-  }
-  return null;
-}
-
 function assignJob(s, job, game) {
   s.job = job;
   let tx = job.x;
@@ -184,99 +744,18 @@ function assignJob(s, job, game) {
     }
   }
   goToTile(s, game, tx, ty);
-  if (job.type === "build") s.thought = `строит ${labelBuilding(job.building)}`;
-  else if (job.type === "chop") s.thought = "рубит дерево";
-  else if (job.type === "gather") s.thought = "собирает ягоды";
-  else if (job.type === "mine") s.thought = "добывает камень";
-  else if (job.type === "harvest") s.thought = "собирает урожай";
-  else if (job.type === "sleep") s.thought = "идёт спать";
 }
 
 function labelBuilding(type) {
-  return type === "hut" ? "домик" : type === "farm" ? "грядку" : "склад";
-}
-
-function autoSurvive(s, game) {
-  const ripe = findRipeFarm(game.world, s.x, s.y);
-  if (ripe) {
-    const job = { type: "harvest", x: ripe.x, y: ripe.y, claimedBy: s.id, auto: true };
-    if (!game.jobs.some((j) => j.type === "harvest" && j.x === ripe.x && j.y === ripe.y)) {
-      game.jobs.push(job);
-    } else {
-      const existing = game.jobs.find((j) => j.type === "harvest" && j.x === ripe.x && j.y === ripe.y && !j.claimedBy);
-      if (existing) {
-        existing.claimedBy = s.id;
-        assignJob(s, existing, game);
-        return;
-      }
-    }
-    assignJob(s, job, game);
-    return;
-  }
-
-  if (game.stock.food < 10) {
-    const bush = nearestResource(game.world, s.x, s.y, "bush");
-    if (bush) {
-      game.world.resources[bush.y][bush.x].reserved = true;
-      const job = { type: "gather", x: bush.x, y: bush.y, claimedBy: s.id, auto: true };
-      game.jobs.push(job);
-      assignJob(s, job, game);
-      return;
-    }
-  }
-
-  if (game.stock.wood < 12) {
-    const tree = nearestResource(game.world, s.x, s.y, "tree");
-    if (tree) {
-      game.world.resources[tree.y][tree.x].reserved = true;
-      const job = { type: "chop", x: tree.x, y: tree.y, claimedBy: s.id, auto: true };
-      game.jobs.push(job);
-      assignJob(s, job, game);
-      return;
-    }
-  }
-
-  if (game.stock.stone < 4 && Math.random() < 0.3) {
-    const rock = nearestResource(game.world, s.x, s.y, "rock");
-    if (rock) {
-      game.world.resources[rock.y][rock.x].reserved = true;
-      const job = { type: "mine", x: rock.x, y: rock.y, claimedBy: s.id, auto: true };
-      game.jobs.push(job);
-      assignJob(s, job, game);
-      return;
-    }
-  }
-
-  if (Math.random() < 0.015) {
-    const tx = Math.round(s.x + (Math.random() - 0.5) * 8);
-    const ty = Math.round(s.y + (Math.random() - 0.5) * 8);
-    if (walkable(game.world, tx, ty)) {
-      s.job = { type: "wander", x: tx, y: ty, claimedBy: s.id };
-      goToTile(s, game, tx, ty);
-      s.thought = "бродит";
-      return;
-    }
-  }
-
-  s.thought = "ждёт работу";
-}
-
-function findRipeFarm(world, x, y) {
-  let best = null;
-  let bestD = Infinity;
-  for (let ty = 0; ty < world.terrain.length; ty++) {
-    for (let tx = 0; tx < world.terrain[0].length; tx++) {
-      const b = world.buildings[ty][tx];
-      if (b && b.type === "farm" && b.done && (b.growth ?? 0) >= 1) {
-        const d = Math.abs(tx - x) + Math.abs(ty - y);
-        if (d < bestD) {
-          bestD = d;
-          best = b;
-        }
-      }
-    }
-  }
-  return best;
+  return {
+    hut: "домик",
+    farm: "грядку",
+    stockpile: "склад",
+    wall: "стену",
+    gate: "ворота",
+    tower: "башню",
+    barracks: "казарму",
+  }[type] || "здание";
 }
 
 function goToTile(s, game, tx, ty) {
@@ -285,6 +764,7 @@ function goToTile(s, game, tx, ty) {
     s.thought = "не может пройти";
     releaseJob(s, game);
     s.state = "idle";
+    s.brain.commit = 0;
     return;
   }
   s.path = path;
@@ -297,6 +777,13 @@ function advancePath(s, dt, speed) {
   const target = s.path[0];
   const tx = target.x + 0.5;
   const ty = target.y + 0.5;
+  // Skip into fire tiles if possible
+  if ((s._game?.world.fire[target.y]?.[target.x] || 0) > 0.55 && s.brain.goal?.type !== "flee_fire") {
+    // repath around
+    s.path = [];
+    s.brain.commit = 0;
+    return;
+  }
   const dx = tx - s.x;
   const dy = ty - s.y;
   const dist = Math.hypot(dx, dy) || 0.0001;
@@ -316,12 +803,57 @@ function onArrived(s, game) {
   if (!job || job.type === "wander") {
     s.state = "idle";
     s.job = null;
-    s.thought = "осматривается";
+    if (s.brain.goal?.type === "patrol") s.thought = "всё тихо";
+    else s.thought = "осматривается";
     return;
   }
-  if (job.type === "sleep") {
+  if (job.type === "sleep" || job.type === "shelter") {
     s.state = "sleep";
-    s.thought = "спит в домике";
+    s.thought = job.type === "shelter" ? "ждёт в укрытии" : "спит в домике";
+    if (s.life) s.life.wet = Math.max(0, s.life.wet - 0.3);
+    return;
+  }
+  if (job.type === "social") {
+    const partner = game.settlers.find((o) => o.id === job.partnerId && o.state !== "die");
+    if (partner && Math.hypot(partner.x - s.x, partner.y - s.y) < 2.2) {
+      s.state = "chat";
+      s.workTimer = 2.8 + Math.random() * 1.5;
+      s.brain.targetId = partner.id;
+      s.thought = `говорит с ${partner.name}`;
+      // Pull partner into chat if idle-ish
+      if (partner.state === "idle" || partner.state === "walk") {
+        partner.path = [];
+        partner.state = "chat";
+        partner.workTimer = s.workTimer;
+        partner.brain.targetId = s.id;
+        partner.thought = `говорит с ${s.name}`;
+        if (partner.job?.auto) partner.job = null;
+      }
+    } else {
+      s.state = "idle";
+      s.job = null;
+      s.thought = "не застал собеседника";
+    }
+    return;
+  }
+  if (job.type === "close_gate") {
+    if (job.gate && !job.gate.shut) {
+      job.gate.shut = true;
+      s.thought = "закрыл ворота";
+      game.toast(`${s.name} закрыл${nameEnding(s.name)} ворота`);
+      if (s.life) s.life.mood = Math.min(1, s.life.mood + 0.05);
+    }
+    s.job = null;
+    s.state = "idle";
+    s.brain.commit = 0.4;
+    return;
+  }
+  if (job.type === "hunt") {
+    finishHunt(s, game, job);
+    return;
+  }
+  if (job.type === "loot") {
+    finishLoot(s, game, job);
     return;
   }
   s.state = "work";
@@ -329,7 +861,60 @@ function onArrived(s, game) {
     job.type === "build" ? (BUILD_TIME[job.building] || 6) :
     job.type === "chop" ? 3.2 :
     job.type === "mine" ? 3.6 :
-    job.type === "harvest" ? 2.2 : 2.4;
+    job.type === "harvest" ? 2.2 :
+    job.type === "tend_farm" ? 2.8 :
+    job.type === "craft" ? 3.5 :
+    job.type === "trade" ? 2.6 : 2.4;
+}
+
+function finishHunt(s, game, job) {
+  const prey = game.creatures.find((c) => c.id === job.preyId && !c.dead);
+  if (prey && Math.hypot(prey.x - s.x, prey.y - s.y) < 1.4) {
+    prey.hp -= 25 + s.brain.traits.bravery * 20;
+    if (prey.hp <= 0) {
+      prey.dead = true;
+      game.stock.food += prey.food || 4;
+      prey.looted = true;
+      game.toast(`${s.name} добыл${nameEnding(s.name)} кролика`);
+      s.state = "eat";
+      s.workTimer = 1.2;
+      s.thought = "жарит добычу";
+      if (game.stock.food > 0) {
+        game.stock.food -= 1;
+        s.hunger = Math.min(100, s.hunger + 20);
+      }
+    } else {
+      // Chase again
+      s.job = { ...job, x: Math.floor(prey.x), y: Math.floor(prey.y) };
+      goToTile(s, game, Math.floor(prey.x), Math.floor(prey.y));
+      return;
+    }
+  } else if (prey) {
+    s.job = { ...job, x: Math.floor(prey.x), y: Math.floor(prey.y) };
+    goToTile(s, game, Math.floor(prey.x), Math.floor(prey.y));
+    return;
+  }
+  removeJob(game, job);
+  s.job = null;
+  if (s.state !== "eat") {
+    s.state = "idle";
+    s.thought = "зверь ушёл";
+  }
+  s.brain.commit = 0;
+}
+
+function finishLoot(s, game, job) {
+  const corpse = game.creatures.find((c) => c.id === job.corpseId && c.dead && !c.looted);
+  if (corpse && Math.hypot(corpse.x - s.x, corpse.y - s.y) < 1.5) {
+    game.stock.food += corpse.food || 3;
+    corpse.looted = true;
+    game.toast(`${s.name} собрал${nameEnding(s.name)} добычу`);
+  }
+  removeJob(game, job);
+  s.job = null;
+  s.state = "idle";
+  s.brain.commit = 0;
+  s.thought = "добыча собрана";
 }
 
 function doWork(s, dt, game) {
@@ -338,20 +923,93 @@ function doWork(s, dt, game) {
     s.state = "idle";
     return;
   }
+
+  // Drop work if threatened badly
+  const sense = game._sense;
+  if (sense) {
+    const threat = nearestThreat(sense, s.x, s.y, 3.2);
+    if (threat && s.brain.traits.bravery < 0.55 && job.type !== "build") {
+      s.brain.commit = 0;
+      think(s, game, sense);
+      return;
+    }
+  }
+
   s.workTimer -= dt;
   s.energy = Math.max(0, s.energy - dt * 1.4);
 
+  // Skill speeds work
+  const skill =
+    (job.type === "build" && (s.brain.role === "builder" || s.brain.role === "craftsman")) ? 1.35 :
+    ((job.type === "gather" || job.type === "harvest" || job.type === "tend_farm") && (s.brain.role === "gatherer" || s.brain.role === "farmer")) ? 1.3 :
+    (job.type === "chop" && (s.brain.role === "gatherer" || s.brain.role === "craftsman")) ? 1.15 :
+    (job.type === "craft" && s.brain.role === "craftsman") ? 1.4 :
+    (job.type === "trade" && s.brain.role === "trader") ? 1.35 : 1;
+
+  if (job.type === "tend_farm") {
+    const b = job.farm || game.world.buildings[job.y]?.[job.x];
+    if (b?.type === "farm" && b.done) {
+      const grow = (0.12 + (s.life?.skills?.farming || 0) * 0.15) * skill;
+      b.growth = Math.min(1, (b.growth ?? 0) + dt * grow);
+      s.thought = "полоет грядку";
+      if (s.life) s.life.skills.farming = Math.min(1, (s.life.skills.farming || 0) + dt * 0.02);
+    }
+    if (s.workTimer <= 0) {
+      finishJob(s, game);
+      s.thought = "грядка в порядке";
+    }
+    return;
+  }
+
+  if (job.type === "craft") {
+    s.thought = "мастерит…";
+    if (s.life) s.life.skills.craft = Math.min(1, (s.life.skills.craft || 0) + dt * 0.02);
+    if (s.workTimer <= 0) {
+      // Craft converts wood → tools value as stone/wood efficiency
+      if (game.stock.wood >= 2) {
+        game.stock.wood -= 2;
+        game.stock.stone += 1;
+        if (s.life) s.life.mood = Math.min(1, s.life.mood + 0.08);
+        game.toast(`${s.name} смастерил${nameEnding(s.name)} инструмент`);
+      }
+      finishJob(s, game);
+    }
+    return;
+  }
+
+  if (job.type === "trade") {
+    s.thought = "торгует…";
+    if (s.life) s.life.skills.trade = Math.min(1, (s.life.skills.trade || 0) + dt * 0.02);
+    if (s.workTimer <= 0) {
+      // Balance stock: excess wood → food or stone → wood
+      if (game.stock.wood > game.stock.food + 8 && game.stock.wood >= 4) {
+        game.stock.wood -= 3;
+        game.stock.food += 2;
+        s.thought = "выменял еду";
+      } else if (game.stock.food > game.stock.wood + 10 && game.stock.food >= 4) {
+        game.stock.food -= 2;
+        game.stock.wood += 2;
+        s.thought = "выменял дерево";
+      } else if (game.stock.stone > 6 && game.stock.wood < 10) {
+        game.stock.stone -= 1;
+        game.stock.wood += 2;
+        s.thought = "выменял дерево на камень";
+      } else {
+        s.thought = "цен нет — ждёт покупателей";
+      }
+      if (s.life) s.life.mood = Math.min(1, s.life.mood + 0.05);
+      finishJob(s, game);
+    }
+    return;
+  }
+
   if (job.type === "build") {
     const b = game.world.buildings[job.y]?.[job.x];
-    if (!b) {
+    if (!b || b.done) {
       finishJob(s, game);
       return;
     }
-    if (b.done) {
-      finishJob(s, game);
-      return;
-    }
-    const total = BUILD_TIME[b.type] || 6;
+    const total = (BUILD_TIME[b.type] || 6) / skill;
     b.progress = Math.min(1, b.progress + dt / total);
     s.thought = "строит…";
     if (b.progress >= 1) {
@@ -369,6 +1027,8 @@ function doWork(s, dt, game) {
     else if (job.type === "mine") s.thought = "долбит камень…";
     else if (job.type === "harvest") s.thought = "собирает урожай…";
     else s.thought = "собирает…";
+    // Faster gatherers finish sooner
+    s.workTimer -= dt * (skill - 1);
     return;
   }
 
@@ -377,8 +1037,9 @@ function doWork(s, dt, game) {
     if (cell?.kind) {
       const key = cell.kind === "tree" ? "tree" : cell.kind === "bush" ? "bush" : "rock";
       const yieldMap = YIELD[key];
+      const bonus = skill > 1.2 ? 1 : 0;
       for (const [k, v] of Object.entries(yieldMap)) {
-        game.stock[k] += v;
+        game.stock[k] += v + bonus;
       }
       cell.amount -= 1;
       if (cell.amount <= 0) {
@@ -402,7 +1063,7 @@ function doWork(s, dt, game) {
   if (job.type === "harvest") {
     const b = game.world.buildings[job.y]?.[job.x];
     if (b?.type === "farm" && b.done && (b.growth ?? 0) >= 1) {
-      game.stock.food += YIELD.farm.food;
+      game.stock.food += YIELD.farm.food + (s.brain.role === "gatherer" ? 1 : 0);
       b.growth = 0;
       game.toast(`${s.name} собрал${nameEnding(s.name)} урожай`);
     }
@@ -412,7 +1073,6 @@ function doWork(s, dt, game) {
 }
 
 function nameEnding(name) {
-  // Names that look feminine by ending but are used as masculine here
   if (/^(Лёня|Коля|Ваня|Саша|Женя|Гоша|Рома|Глеб)$/i.test(name)) return "";
   return /[ая]$/i.test(name) ? "а" : "";
 }
@@ -422,12 +1082,25 @@ function finishJob(s, game) {
   s.job = null;
   s.state = "idle";
   s.thought = "свободен";
+  s.brain.commit = 0.2;
 }
 
 function releaseJob(s, game) {
   if (!s.job) return;
   const job = s.job;
-  if (job.auto || job.type === "wander" || job.type === "sleep") {
+  if (
+    job.auto
+    || job.type === "wander"
+    || job.type === "sleep"
+    || job.type === "shelter"
+    || job.type === "social"
+    || job.type === "close_gate"
+    || job.type === "tend_farm"
+    || job.type === "craft"
+    || job.type === "trade"
+    || job.type === "hunt"
+    || job.type === "loot"
+  ) {
     removeJob(game, job);
   } else {
     job.claimedBy = null;
@@ -443,3 +1116,5 @@ function removeJob(game, job) {
   if (!job) return;
   game.jobs = game.jobs.filter((j) => j !== job);
 }
+
+export { roleLabel };
