@@ -6,18 +6,29 @@ import {
   RECRUIT_COST,
   TIME_LABELS,
 } from "./config.js";
+import { seedWildlife, updateCreatures } from "./creatures.js";
+import {
+  applyPower,
+  BRUSH_TOOLS,
+  CLICK_POWERS,
+  updateWorldForces,
+} from "./powers.js";
 import { createRenderer } from "./renderer.js";
 import {
+  beginSettlerThink,
   bindSettler,
   createSettler,
   updateSettler,
 } from "./settlers.js";
+import { buildingMaxHp, createWarState, MILITARY_BUILDINGS, updateWar } from "./war.js";
 import {
   countBuildings,
   createWorld,
   findBuildSite,
   inBounds,
 } from "./world.js";
+
+const BUILD_TOOLS = new Set(["hut", "farm", "stockpile", ...MILITARY_BUILDINGS]);
 
 export function createGame(canvas) {
   const world = createWorld();
@@ -29,9 +40,15 @@ export function createGame(canvas) {
     world,
     renderer,
     settlers: [],
+    creatures: [],
     jobs: [],
+    fx: [],
+    tornadoes: [],
     stock: { food: 18, wood: 20, stone: 4 },
     tool: "select",
+    powerTab: "war",
+    brushSize: 1,
+    war: createWarState(),
     speed: 1,
     time: DAY_LENGTH * 0.3,
     day: 1,
@@ -39,26 +56,27 @@ export function createGame(canvas) {
     isNight: false,
     selected: null,
     selectedBuilding: null,
+    selectedCreature: null,
     hoverTile: null,
     hoverValid: false,
     nextSettlerId: 1,
-    toasts: [],
+    nextCreatureId: 1,
+    painting: false,
     toast(msg) {
       pushToast(msg);
     },
     keys: new Set(),
   };
 
-  // Starting campfire cleared area + 3 settlers
   for (let i = 0; i < 3; i++) {
     const s = createSettler(cx - 1 + i, cy + 1, game.nextSettlerId++);
+    s.faction = "colony";
     bindSettler(s, game);
     game.settlers.push(s);
   }
 
-  // Tiny starter stockpile marker building already done? Give them a blueprint nearby - optional
-  // Place a completed stockpile at center for narrative
   placeBuilding(game, cx, cy, "stockpile", true);
+  seedWildlife(game, 14);
 
   let last = performance.now();
   let running = false;
@@ -90,7 +108,6 @@ export function createGame(canvas) {
     last = now;
     const dt = raw * game.speed;
 
-    // Camera WASD
     const pan = 8 * raw / Math.max(0.4, renderer.cam.zoom);
     if (game.keys.has("KeyW") || game.keys.has("ArrowUp")) renderer.cam.y -= pan;
     if (game.keys.has("KeyS") || game.keys.has("ArrowDown")) renderer.cam.y += pan;
@@ -117,23 +134,38 @@ export function createGame(canvas) {
   function onPointerMove(sx, sy) {
     const tile = screenToTile(sx, sy);
     game.hoverTile = tile;
-    if (game.tool === "hut" || game.tool === "farm" || game.tool === "stockpile") {
+    if (BUILD_TOOLS.has(game.tool)) {
       game.hoverValid = canAfford(game, game.tool) && findBuildSite(world, tile.x, tile.y);
     } else {
       game.hoverValid = inBounds(tile.x, tile.y);
     }
+
+    if (game.painting && BRUSH_TOOLS.has(game.tool)) {
+      applyPower(game, game.tool, tile.x, tile.y, { continuous: true });
+    }
   }
 
-  function onClick(sx, sy) {
+  function onPointerDown(sx, sy) {
     const tile = screenToTile(sx, sy);
     if (!inBounds(tile.x, tile.y)) return;
 
-    if (game.tool === "select") {
-      selectAt(game, tile.x, tile.y, sx, sy);
+    if (BRUSH_TOOLS.has(game.tool)) {
+      game.painting = true;
+      applyPower(game, game.tool, tile.x, tile.y);
       return;
     }
 
-    if (game.tool === "hut" || game.tool === "farm" || game.tool === "stockpile") {
+    if (CLICK_POWERS.has(game.tool)) {
+      applyPower(game, game.tool, tile.x, tile.y);
+      return;
+    }
+
+    if (game.tool === "select") {
+      selectAt(game, tile.x, tile.y);
+      return;
+    }
+
+    if (BUILD_TOOLS.has(game.tool)) {
       tryBuild(game, tile.x, tile.y, game.tool);
       return;
     }
@@ -141,6 +173,15 @@ export function createGame(canvas) {
     if (game.tool === "chop" || game.tool === "gather" || game.tool === "mine") {
       markResource(game, tile.x, tile.y, game.tool);
     }
+  }
+
+  function onPointerUp() {
+    game.painting = false;
+  }
+
+  // backward compatible name used by main.js
+  function onClick(sx, sy) {
+    onPointerDown(sx, sy);
   }
 
   function recruit() {
@@ -157,6 +198,7 @@ export function createGame(canvas) {
     game.stock.food -= RECRUIT_COST.food;
     const spot = findSpawn(game);
     const s = createSettler(spot.x, spot.y, game.nextSettlerId++);
+    s.faction = "colony";
     bindSettler(s, game);
     game.settlers.push(s);
     game.toast(`${s.name} присоединился к поселению`);
@@ -169,6 +211,8 @@ export function createGame(canvas) {
     resize,
     setToastHandler,
     onPointerMove,
+    onPointerDown,
+    onPointerUp,
     onClick,
     recruit,
     clampCam,
@@ -186,7 +230,6 @@ function update(game, dt) {
   game.dayPhase = game.time / DAY_LENGTH;
   game.isNight = game.dayPhase < 0.18 || game.dayPhase > 0.82;
 
-  // Farms grow
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const b = game.world.buildings[y][x];
@@ -194,7 +237,6 @@ function update(game, dt) {
         if ((b.growth ?? 0) < 1) {
           b.growth = Math.min(1, (b.growth ?? 0) + dt / 28);
         } else {
-          // Ensure harvest job exists
           const exists = game.jobs.some((j) => j.type === "harvest" && j.x === x && j.y === y);
           if (!exists) game.jobs.push({ type: "harvest", x, y, claimedBy: null });
         }
@@ -202,7 +244,6 @@ function update(game, dt) {
     }
   }
 
-  // Bushes slowly respawn
   if (Math.random() < dt * 0.15) {
     const x = (Math.random() * MAP_W) | 0;
     const y = (Math.random() * MAP_H) | 0;
@@ -214,11 +255,14 @@ function update(game, dt) {
     }
   }
 
+  beginSettlerThink(game);
   for (const s of game.settlers) {
     if (s.state !== "die") updateSettler(s, dt, game);
   }
 
-  // Remove stale auto jobs that are orphaned too long? keep simple
+  updateCreatures(game, dt);
+  updateWar(game, dt);
+  updateWorldForces(game, dt);
 }
 
 function canAfford(game, type) {
@@ -240,7 +284,11 @@ function tryBuild(game, x, y, type) {
   for (const [k, v] of Object.entries(cost)) game.stock[k] -= v;
   placeBuilding(game, x, y, type, false);
   game.jobs.push({ type: "build", building: type, x, y, claimedBy: null });
-  game.toast(`Заказан ${type === "hut" ? "домик" : type === "farm" ? "огород" : "склад"}`);
+  const names = {
+    hut: "домик", farm: "огород", stockpile: "склад",
+    wall: "стена", gate: "ворота", tower: "башня", barracks: "казарма",
+  };
+  game.toast(`Стройка: ${names[type] || type}`);
 }
 
 function placeBuilding(game, x, y, type, done) {
@@ -252,6 +300,8 @@ function placeBuilding(game, x, y, type, done) {
     progress: done ? 1 : 0,
     done: !!done,
     growth: type === "farm" ? (done ? 0.4 : 0) : undefined,
+    hp: buildingMaxHp(type),
+    cool: 0,
   };
   game.world.buildings[y][x] = b;
   return b;
@@ -276,8 +326,7 @@ function markResource(game, x, y, tool) {
   game.toast("Задание добавлено");
 }
 
-function selectAt(game, tx, ty, sx, sy) {
-  // Prefer settler near click
+function selectAt(game, tx, ty) {
   let best = null;
   let bestD = 0.55;
   for (const s of game.settlers) {
@@ -291,17 +340,40 @@ function selectAt(game, tx, ty, sx, sy) {
   if (best) {
     game.selected = best;
     game.selectedBuilding = null;
+    game.selectedCreature = null;
     return;
   }
+
+  let creature = null;
+  let cDist = 0.7;
+  for (const c of game.creatures) {
+    if (c.dead) continue;
+    const d = Math.hypot(c.x - (tx + 0.5), c.y - (ty + 0.5));
+    if (d < cDist) {
+      cDist = d;
+      creature = c;
+    }
+  }
+  if (creature) {
+    game.selectedCreature = creature;
+    game.selected = null;
+    game.selectedBuilding = null;
+    return;
+  }
+
   const b = game.world.buildings[ty]?.[tx];
   if (b) {
     game.selectedBuilding = b;
     game.selected = null;
+    game.selectedCreature = null;
     return;
   }
   const cell = game.world.resources[ty]?.[tx];
   game.selected = null;
-  game.selectedBuilding = cell?.kind ? { type: "resource", kind: cell.kind, amount: cell.amount, x: tx, y: ty } : null;
+  game.selectedCreature = null;
+  game.selectedBuilding = cell?.kind
+    ? { type: "resource", kind: cell.kind, amount: cell.amount, x: tx, y: ty }
+    : { type: "tile", terrain: game.world.terrain[ty][tx], x: tx, y: ty };
 }
 
 function findSpawn(game) {
