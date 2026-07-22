@@ -12,6 +12,7 @@ import {
   schedulePhase,
 } from "./life.js";
 import { MAP_H, MAP_W } from "./config.js";
+import { assessThreat, assignWeapon } from "./social.js";
 import { inBounds, walkable } from "./world.js";
 
 const ROLES = ["farmer", "builder", "craftsman", "gatherer", "hunter", "trader", "guard"];
@@ -175,18 +176,32 @@ export function decideGoal(s, game, sense) {
     }
   }
 
-  // --- Danger ---
+  // --- Danger: self-preservation (flee / cover / call help / attack) ---
+  assignWeapon(s);
   if (threat) {
-    const fightPower = allies.length * 18 + traits.bravery * 40 + (role === "guard" || role === "hunter" ? 25 : 0) - fear * 20;
-    const danger = threat.unit.damage + threat.unit.hp * 0.15;
-    if (fightPower > danger && hpProxy > 40 && threat.dist < 5.5 && fear < 0.85) {
+    const decision = assessThreat(s, threat, allies.filter((a) => a.id !== s.id), game);
+    if (decision.action === "attack" && hpProxy > 30) {
       goals.push({
         type: "fight",
-        score: 100 + traits.bravery * 50 + (role === "guard" ? 30 : 0) - threat.dist * 4 - fear * 15,
-        thought: threat.unit.kind === "bandit" ? "бьёт бандита" : "бьёт волка",
+        score: 105 + traits.bravery * 45 + (role === "guard" ? 30 : 0) - threat.dist * 3 - fear * 12,
+        thought: threat.unit.kind === "bandit" ? "бьёт бандита" : threat.unit.kind === "soldier" ? "бьёт орду" : "бьёт волка",
         payload: { targetId: threat.unit.id },
       });
-    } else if (threat.dist < 5) {
+    } else if (decision.action === "cover") {
+      goals.push({
+        type: "seek_cover",
+        score: 125 + fear * 20,
+        thought: "ищет укрытие в бою",
+        payload: { fromId: threat.unit.id, targetId: threat.unit.id },
+      });
+    } else if (decision.action === "call_help") {
+      goals.push({
+        type: "call_help",
+        score: 128 + fear * 25,
+        thought: "зовёт стражу!",
+        payload: { fromId: threat.unit.id, targetId: threat.unit.id },
+      });
+    } else if (threat.dist < 5.5) {
       goals.push({
         type: "flee",
         score: 130 + (5 - threat.dist) * 15 - traits.bravery * 20 + fear * 30,
@@ -195,18 +210,28 @@ export function decideGoal(s, game, sense) {
       });
     }
 
+    // Answer cries for help / defend group mates
     for (const a of sense.alive) {
       if (a.id === s.id) continue;
-      if (a.thought?.includes("атакован") || a.state === "fight" || (a.life?.fear || 0) > 0.6) {
+      const sameGroup = life.groupId && a.life?.groupId === life.groupId;
+      if (a.thought?.includes("атакован") || a.thought?.includes("зовёт") || a.state === "fight" || (a.life?.fear || 0) > 0.6 || sameGroup && threat.dist < 8) {
         const d = Math.hypot(a.x - s.x, a.y - s.y);
-        if (d < 8) {
+        if (d < 9) {
           goals.push({
             type: "fight",
-            score: 70 + traits.empathy * 40 + traits.bravery * 20 - d * 3,
+            score: 75 + traits.empathy * 40 + traits.bravery * 20 - d * 3 + (sameGroup ? 25 : 0) + (role === "guard" ? 20 : 0),
             thought: `защищает ${a.name}`,
             payload: { targetId: threat.unit.id, allyId: a.id },
           });
         }
+      }
+    }
+
+    // Distrustful NPCs hesitate to fight near cruel gods (low playerRep) unless bravery high
+    if ((life.playerRep ?? 0) < -0.4 && traits.bravery < 0.55) {
+      for (const g of goals) {
+        if (g.type === "fight") g.score -= 25;
+        if (g.type === "flee") g.score += 15;
       }
     }
   }

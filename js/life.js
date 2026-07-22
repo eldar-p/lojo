@@ -353,22 +353,25 @@ export function findFarmToTend(game, s) {
  * kind: bless | harm | spawn_threat | rain | fire | death | tornado
  */
 export function reactToPlayer(game, kind, x, y, radius = 4) {
+  // Memory / reputation handled in social.rememberPlayer via powers hooks.
+  // Here we keep immediate emotional reaction.
   for (const s of game.settlers) {
     if (s.state === "die" || !s.life) continue;
     const d = Math.hypot(s.x - x, s.y - y);
     if (d > radius) continue;
     const falloff = 1 - d / radius;
+    const trusts = (s.life.playerRep ?? 0) > 0.25;
 
     if (kind === "bless") {
       s.life.joy = Math.min(1, s.life.joy + 0.45 * falloff);
       s.life.mood = Math.min(1, s.life.mood + 0.35 * falloff);
       s.life.fear = Math.max(0, s.life.fear - 0.2);
-      s.thought = "благодарит богов";
+      s.thought = trusts ? "благодарит богов" : "осторожно принимает дар";
       s.brain.commit = 0;
     } else if (kind === "harm" || kind === "fire" || kind === "meteor" || kind === "bomb" || kind === "lightning") {
       s.life.fear = Math.min(1, s.life.fear + 0.55 * falloff);
       s.life.mood = Math.max(0, s.life.mood - 0.4 * falloff);
-      s.thought = kind === "fire" ? "огонь!" : "в ужасе";
+      s.thought = kind === "fire" ? "огонь!" : trusts ? "не понимает гнева богов" : "в ужасе от богов";
       s.brain.commit = 0;
       s.brain.thinkCd = 0;
     } else if (kind === "death" || kind === "tornado") {
@@ -382,7 +385,7 @@ export function reactToPlayer(game, kind, x, y, radius = 4) {
       if (!isIndoors(game, s)) s.thought = "мокнет под дождём";
     } else if (kind === "spawn_threat") {
       s.life.fear = Math.min(1, s.life.fear + 0.35 * falloff);
-      s.thought = "замечает опасность";
+      s.thought = (s.life.playerRep ?? 0) < -0.2 ? "боги наслали беду" : "замечает опасность";
       s.brain.commit = 0;
     } else if (kind === "spawn_friend") {
       s.life.joy = Math.min(1, s.life.joy + 0.2 * falloff);
@@ -414,5 +417,9 @@ export function createLifeState(id) {
     bonds: Object.create(null),
     skills: { farming: 0.1, craft: 0.1, trade: 0.1, combat: 0.1, gather: 0.15 },
     homeId: null,
+    playerRep: 0.1,
+    memories: [],
+    heardRumors: [],
+    groupId: null,
   };
 }

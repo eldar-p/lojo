@@ -2,6 +2,12 @@ import { TOOL_HINTS } from "./config.js";
 import { createGame, getTimeLabel } from "./game.js";
 import { clothingLabel, moodLabel, schedulePhase, weatherStatus } from "./life.js";
 import { POWER_TABS, WAR_GROUPS } from "./powers.js";
+import {
+  activeQuestSummary,
+  attitudeLabel,
+  personalAttitude,
+  weaponInfo,
+} from "./social.js";
 import { STRATEGIES } from "./war.js";
 import { countBuildings } from "./world.js";
 
@@ -316,22 +322,30 @@ function colonyStatus(game) {
   const weather = weatherStatus(game);
   const st = STRATEGIES[game.war?.colonyStance]?.name;
 
+  const quest = activeQuestSummary(game);
+  const rep = attitudeLabel(game.social?.playerRep ?? 0);
+  if (quest) {
+    return `Поручение · ${quest} · ${rep}`;
+  }
   if (game.war?.atWar || enemyN) {
     return `${weather} · война · «${st || "—"}» · солдаты ${soldiers} / орда ${enemyN}`;
   }
   if (game.weather?.kind === "rain" || game.weather?.kind === "storm") {
-    return `${weather} · ${phase.label} · прячутся и живут · домов ${homes}`;
+    return `${weather} · ${phase.label} · прячутся · ${rep}`;
   }
   if (sleeping >= Math.max(1, (alive.length / 2) | 0)) {
     return `${weather} · ${phase.label} · спят ${sleeping}`;
   }
   if (chatting > 0) {
-    return `${weather} · ${phase.label} · общаются ${chatting} · строят ${builds}`;
+    const rumor = game.social?.rumors?.slice(-1)[0];
+    return rumor
+      ? `${phase.label} · слух: ${rumor.text}`
+      : `${weather} · ${phase.label} · общаются ${chatting}`;
   }
   if (builds > 0) {
-    return `${weather} · ${phase.label} · работают · очередей ${builds}`;
+    return `${weather} · ${phase.label} · работают · ${rep}`;
   }
-  return `${weather} · ${phase.label} · ${alive.length} чел. живут сами`;
+  return `${weather} · ${phase.label} · ${alive.length} чел. · ${rep}`;
 }
 
 function hasSelection(game) {
@@ -351,23 +365,27 @@ function updateInspect() {
   if (game.selected && game.selected.state !== "die") {
     const s = game.selected;
     const role = s.brain?.roleName || "Житель";
-    const goal = s.brain?.goal?.type || s.state;
     const phase = schedulePhase(api.game.dayPhase);
     const mood = moodLabel(s.life?.mood ?? 0.5);
     const cloth = clothingLabel(s.life?.clothing || "plain");
+    const att = personalAttitude(s);
+    const wpn = weaponInfo(s);
+    const mem = (s.life?.memories || []).slice(-1)[0];
+    const memLine = mem ? ` · помнит: ${mem.note}` : "";
     el.title.textContent = `${s.name} · ${role}`;
-    el.body.textContent = `${s.thought} · ${phase.label} · ${mood} · ${cloth}`;
+    el.body.textContent = `${s.thought} · ${phase.label} · ${mood} · ${att} · ${wpn.name}${memLine}`;
     el.bars.classList.remove("hidden");
     const moodPct = ((s.life?.mood ?? 0.5) * 100).toFixed(0);
     const fearPct = ((s.life?.fear ?? 0) * 100).toFixed(0);
+    const trustPct = ((((s.life?.playerRep ?? 0) + 1) / 2) * 100).toFixed(0);
     const socialPct = ((s.life?.socialNeed ?? 0) * 100).toFixed(0);
     el.bars.innerHTML = `
       <div class="bar-row"><span>Голод</span><div class="bar bar--hunger"><i style="width:${s.hunger.toFixed(0)}%"></i></div></div>
       <div class="bar-row"><span>Силы</span><div class="bar bar--energy"><i style="width:${s.energy.toFixed(0)}%"></i></div></div>
       <div class="bar-row"><span>Настрой</span><div class="bar bar--progress"><i style="width:${moodPct}%"></i></div></div>
       <div class="bar-row"><span>Страх</span><div class="bar bar--hunger"><i style="width:${fearPct}%"></i></div></div>
-      <div class="bar-row"><span>Общение</span><div class="bar bar--energy"><i style="width:${socialPct}%"></i></div></div>
-      <div class="bar-row"><span>Цель</span><div class="bar bar--progress"><i style="width:${Math.min(100, (s.brain?.commit || 0) * 40).toFixed(0)}%"></i></div></div>
+      <div class="bar-row"><span>К богам</span><div class="bar bar--energy"><i style="width:${trustPct}%"></i></div></div>
+      <div class="bar-row"><span>Общение</span><div class="bar bar--progress"><i style="width:${socialPct}%"></i></div></div>
     `;
     return;
   }

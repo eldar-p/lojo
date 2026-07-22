@@ -448,6 +448,20 @@ function drawSettler(ctx, s, p, zoom, selected) {
     ctx.fill();
   }
 
+  // Simple weapon silhouette
+  if (s.weapon === "spear" || s.weapon === "bow" || s.weapon === "club") {
+    ctx.strokeStyle = s.weapon === "bow" ? "#8a5a36" : "#5c6570";
+    ctx.lineWidth = 1.6 * scale;
+    ctx.beginPath();
+    if (s.weapon === "bow") {
+      ctx.arc(7 * scale, -2 * scale, 5 * scale, -0.8, 0.8);
+    } else {
+      ctx.moveTo(5 * scale, 2 * scale);
+      ctx.lineTo(5 * scale, -14 * scale);
+    }
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 

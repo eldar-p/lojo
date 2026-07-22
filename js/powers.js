@@ -2,6 +2,7 @@ import { MAP_H, MAP_W } from "./config.js";
 import { reactToPlayer, setRaining } from "./life.js";
 import { createSettler, bindSettler } from "./settlers.js";
 import { createCreature } from "./creatures.js";
+import { onQuestEvent, rememberPlayer } from "./social.js";
 import {
   declareWar,
   makePeace,
@@ -130,6 +131,11 @@ export function applyPower(game, tool, tx, ty, { continuous = false } = {}) {
   if (tool === "spawn_army") {
     spawnEnemyArmy(game, tx, ty, 5);
     reactToPlayer(game, "spawn_threat", tx + 0.5, ty + 0.5, 12);
+    rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, {
+      radius: 14,
+      weight: 0.4,
+      note: "боги наслали Орду",
+    });
     return;
   }
   if (tool === "train_soldier") {
@@ -151,12 +157,21 @@ function paintTile(game, tool, x, y) {
   const cell = world.resources[y][x];
 
   if (tool === "erase") {
+    const hadStock = world.buildings[y][x]?.type === "stockpile";
+    const hadHut = world.buildings[y][x]?.type === "hut";
     world.terrain[y][x] = "dirt";
     cell.kind = null;
     cell.amount = 0;
     cell.reserved = false;
     world.buildings[y][x] = null;
     world.fire[y][x] = 0;
+    if (hadStock) {
+      rememberPlayer(game, "theft", x + 0.5, y + 0.5, { radius: 10, weight: 0.35, note: "боги разорили склад" });
+      reactToPlayer(game, "harm", x + 0.5, y + 0.5, 8);
+    } else if (hadHut) {
+      rememberPlayer(game, "aggression", x + 0.5, y + 0.5, { radius: 8, weight: 0.25, note: "боги снесли дом" });
+      reactToPlayer(game, "harm", x + 0.5, y + 0.5, 6);
+    }
     return;
   }
 
@@ -194,6 +209,7 @@ function paintTile(game, tool, x, y) {
     damageLifeAt(game, x, y, 35);
     addFx(game, "spark", x + 0.5, y + 0.5, 0.4);
     reactToPlayer(game, "fire", x + 0.5, y + 0.5, 4);
+    rememberPlayer(game, "aggression", x + 0.5, y + 0.5, { radius: 5, weight: 0.2, note: "боги подожгли землю" });
     return;
   }
 
@@ -227,6 +243,8 @@ function paintTile(game, tool, x, y) {
     game.stock.food += 1;
     addFx(game, "bless", x + 0.5, y + 0.5, 0.7);
     reactToPlayer(game, "bless", x + 0.5, y + 0.5, 3);
+    rememberPlayer(game, "bless", x + 0.5, y + 0.5, { radius: 4, weight: 0.25, note: "боги благословили" });
+    onQuestEvent(game, "bless", 1);
   }
 }
 
@@ -244,6 +262,7 @@ function spawnHuman(game, tx, ty) {
   addFx(game, "spawn", tx + 0.5, ty + 0.5, 0.6);
   game.toast(`${s.name} явился по воле богов`);
   reactToPlayer(game, "spawn_friend", tx + 0.5, ty + 0.5, 6);
+  rememberPlayer(game, "help", tx + 0.5, ty + 0.5, { radius: 7, weight: 0.2, note: "боги прислали человека" });
 }
 
 function spawnCreature(game, kind, tx, ty) {
@@ -259,6 +278,11 @@ function spawnCreature(game, kind, tx, ty) {
   game.toast(`${names[kind] || kind} появился`);
   if (kind === "wolf" || kind === "bandit") {
     reactToPlayer(game, "spawn_threat", tx + 0.5, ty + 0.5, 8);
+    rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, {
+      radius: 9,
+      weight: 0.3,
+      note: kind === "wolf" ? "боги наслали волков" : "боги наслали бандитов",
+    });
   }
 }
 
@@ -274,6 +298,7 @@ function lightning(game, tx, ty) {
     damageLifeAt(game, x, y, 55);
   });
   reactToPlayer(game, "lightning", tx + 0.5, ty + 0.5, 5);
+  rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, { radius: 6, weight: 0.35, note: "молния богов" });
   game.toast("Молния!");
 }
 
@@ -295,6 +320,7 @@ function meteor(game, tx, ty) {
     damageLifeAt(game, x, y, 80);
   });
   reactToPlayer(game, "meteor", tx + 0.5, ty + 0.5, 6);
+  rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, { radius: 7, weight: 0.45, note: "метеорит богов" });
   game.toast("Метеорит!");
 }
 
@@ -311,6 +337,7 @@ function bomb(game, tx, ty) {
     damageLifeAt(game, x, y, 70);
   });
   reactToPlayer(game, "bomb", tx + 0.5, ty + 0.5, 6);
+  rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, { radius: 7, weight: 0.4, note: "взрыв богов" });
   game.toast("Взрыв!");
 }
 
@@ -323,6 +350,7 @@ function tornado(game, tx, ty) {
   });
   addFx(game, "tornado", tx + 0.5, ty + 0.5, 0.8);
   reactToPlayer(game, "tornado", tx + 0.5, ty + 0.5, 7);
+  rememberPlayer(game, "aggression", tx + 0.5, ty + 0.5, { radius: 8, weight: 0.35, note: "торнадо богов" });
   game.toast("Торнадо!");
 }
 
@@ -346,6 +374,9 @@ function deathFinger(game, tx, ty) {
   }
   addFx(game, "death", tx + 0.5, ty + 0.5, 0.5);
   reactToPlayer(game, "death", tx + 0.5, ty + 0.5, 8);
+  if (killed) {
+    rememberPlayer(game, "murder", tx + 0.5, ty + 0.5, { radius: 10, weight: 0.55, note: "боги убили наших" });
+  }
   game.toast(killed ? `Стерто: ${killed}` : "Пусто");
 }
 
@@ -372,7 +403,17 @@ export function damageLifeAt(game, x, y, dmg) {
     if (c.dead) continue;
     if (Math.hypot(c.x - (x + 0.5), c.y - (y + 0.5)) < 0.95) {
       c.hp -= dmg;
-      if (c.hp <= 0) c.dead = true;
+      if (c.hp <= 0) {
+        c.dead = true;
+        if (c.hostile || c.kind === "soldier" || c.kind === "wolf" || c.kind === "bandit") {
+          onQuestEvent(game, "kill", 1);
+          rememberPlayer(game, "defend", x + 0.5, y + 0.5, {
+            radius: 10,
+            weight: 0.15,
+            note: "боги поразили врага",
+          });
+        }
+      }
     }
   }
 }

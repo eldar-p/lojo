@@ -15,6 +15,14 @@ import {
   updateLivingNeeds,
 } from "./life.js";
 import {
+  assignWeapon,
+  exchangeSocial,
+  findCover,
+  formDefenseGroup,
+  onQuestEvent,
+  weaponInfo,
+} from "./social.js";
+import {
   findPath,
   inBounds,
   nearestBuilding,
@@ -50,6 +58,7 @@ export function createSettler(x, y, id) {
     bob: Math.random() * Math.PI * 2,
     thought: "осматривается",
     life: createLifeState(id),
+    weapon: null,
     brain: {
       ...personality,
       goal: null,
@@ -63,6 +72,7 @@ export function createSettler(x, y, id) {
 
 export function bindSettler(s, game) {
   s._game = game;
+  assignWeapon(s);
 }
 
 /** Shared sense rebuilt once per tick for all settlers */
@@ -132,19 +142,26 @@ export function updateSettler(s, dt, game) {
     }
     const partner = game.settlers.find((o) => o.id === s.brain.targetId);
     if (partner && partner.state !== "die") {
-      s.thought = CHAT_LINES[(s.id + (partner.id | 0) + ((s.workTimer * 3) | 0)) % CHAT_LINES.length]
-        .replace("{name}", partner.name);
+      // Refresh line mid-chat with rumors / quarrels
+      if (!s._chatLine || s.workTimer < 1.4) {
+        const ex = exchangeSocial(s, partner, game);
+        s._chatLine = ex.line;
+        if (ex.quarrel) s.thought = ex.line;
+      }
+      s.thought = s._chatLine || `говорит с ${partner.name}`;
     }
     if (s.workTimer <= 0) {
       if (partner?.life && s.life) {
-        s.life.bonds[partner.id] = Math.min(1, (s.life.bonds[partner.id] || 0) + 0.12);
-        partner.life.bonds[s.id] = Math.min(1, (partner.life.bonds[s.id] || 0) + 0.12);
+        const bondDelta = (s.thought || "").includes("ссорится") ? -0.05 : 0.12;
+        s.life.bonds[partner.id] = Math.max(-0.5, Math.min(1, (s.life.bonds[partner.id] || 0) + bondDelta));
+        partner.life.bonds[s.id] = Math.max(-0.5, Math.min(1, (partner.life.bonds[s.id] || 0) + bondDelta));
         partner.life.chatCd = 3;
       }
       if (s.life) s.life.chatCd = 4;
       s.state = "idle";
       s.brain.commit = 0;
-      s.thought = "тепло попрощался";
+      s._chatLine = null;
+      s.thought = (s.thought || "").includes("ссорится") ? "отходит после ссоры" : "тепло попрощался";
     }
     return;
   }
@@ -200,23 +217,15 @@ export function updateSettler(s, dt, game) {
   }
 }
 
-const CHAT_LINES = [
-  "спрашивает {name} про урожай",
-  "смеётся с {name}",
-  "жалуется {name} на погоду",
-  "делится новостями с {name}",
-  "спорит с {name} о запасах",
-  "хвалит работу {name}",
-];
-
 function think(s, game, sense) {
   s.brain.thinkCd = 0.35 + Math.random() * 0.25;
+  assignWeapon(s);
   const goal = decideGoal(s, game, sense);
   s.brain.goal = goal;
-  // Social chats and shelter need longer commitment so work doesn't instantly steal focus
   const commitBonus =
     goal.type === "socialize" ? 2.2 :
     goal.type === "shelter" || goal.type === "sleep" ? 1.5 :
+    goal.type === "seek_cover" || goal.type === "call_help" ? 1.8 :
     goal.type === "chat" ? 2 : 0;
   s.brain.commit = 1.2 + s.brain.traits.diligence + commitBonus;
   s.thought = goal.thought;
@@ -251,6 +260,12 @@ function executeGoal(s, game, sense, goal) {
       break;
     case "flee":
       enactFlee(s, game, sense, goal.payload?.fromId);
+      break;
+    case "seek_cover":
+      enactSeekCover(s, game, sense, goal.payload?.fromId, goal.payload?.targetId);
+      break;
+    case "call_help":
+      enactCallHelp(s, game, sense, goal.payload?.fromId, goal.payload?.targetId);
       break;
     case "flee_fire":
       enactFleeFire(s, game);
@@ -510,10 +525,11 @@ function enactFlee(s, game, sense, fromId) {
     softWander(s, game, sense);
     return;
   }
-  // Prefer fleeing toward allies
+  // Prefer cover, then allies
+  const cover = findCover(game, s, threat.x, threat.y);
   const allies = alliesNearby(sense, s.x, s.y, 10).filter((a) => a.id !== s.id);
-  let dest = fleePoint(game.world, s.x, s.y, threat.x, threat.y);
-  if (allies.length) {
+  let dest = cover || fleePoint(game.world, s.x, s.y, threat.x, threat.y);
+  if (!cover && allies.length) {
     const a = allies[0];
     const candid = fleePoint(game.world, a.x, a.y, threat.x, threat.y);
     if (candid) dest = candid;
@@ -521,8 +537,50 @@ function enactFlee(s, game, sense, fromId) {
   if (dest) {
     s.job = { type: "wander", x: dest.x, y: dest.y, claimedBy: s.id, auto: true };
     goToTile(s, game, dest.x, dest.y);
-    s.thought = "убегает";
+    s.thought = cover ? "бежит к укрытию" : "убегает";
   }
+}
+
+function enactSeekCover(s, game, sense, fromId, targetId) {
+  releaseJob(s, game);
+  const threat = sense.threats.find((t) => t.id === fromId) || nearestThreat(sense, s.x, s.y, 9)?.unit;
+  if (!threat) {
+    softWander(s, game, sense);
+    return;
+  }
+  const cover = findCover(game, s, threat.x, threat.y);
+  if (cover) {
+    s.brain.targetId = targetId || threat.id;
+    s.job = { type: "cover", x: cover.x, y: cover.y, claimedBy: s.id, auto: true, targetId: threat.id };
+    goToTile(s, game, cover.x, cover.y);
+    s.thought = cover.kind === "tree" ? "прячется за деревом" : "встаёт за стеной";
+  } else {
+    enactFlee(s, game, sense, fromId);
+  }
+}
+
+function enactCallHelp(s, game, sense, fromId, targetId) {
+  releaseJob(s, game);
+  s.thought = "зовёт стражу!";
+  if (s.life) s.life.fear = Math.min(1, s.life.fear + 0.15);
+  const threat = sense.threats.find((t) => t.id === fromId) || nearestThreat(sense, s.x, s.y, 9)?.unit;
+  const guards = sense.alive.filter((a) => a.id !== s.id && (a.brain.role === "guard" || a.military || a.brain.traits.bravery > 0.6));
+  const near = alliesNearby(sense, s.x, s.y, 9).filter((a) => a.id !== s.id);
+  const helpers = (guards.length ? guards : near).slice(0, 3);
+  if (helpers.length) formDefenseGroup(game, s, helpers);
+  for (const h of helpers) {
+    h.brain.commit = 0;
+    h.brain.thinkCd = 0;
+    h.thought = `слышит зов ${s.name}`;
+    if (threat) {
+      h.brain.goal = { type: "fight", thought: `бежит на помощь ${s.name}`, payload: { targetId: threat.id, allyId: s.id } };
+      h.brain.commit = 2.5;
+      startFight(h, game, threat.id);
+    }
+  }
+  // Caller takes cover while waiting
+  if (threat) enactSeekCover(s, game, sense, fromId, targetId);
+  else softWander(s, game, sense);
 }
 
 function enactFleeFire(s, game) {
@@ -553,6 +611,7 @@ function enactFleeFire(s, game) {
 
 function startFight(s, game, targetId) {
   releaseJob(s, game);
+  assignWeapon(s);
   s.brain.targetId = targetId;
   s.state = "fight";
   s.thought = "в бою";
@@ -571,19 +630,38 @@ function doFight(s, dt, game, sense) {
     return;
   }
 
+  const wpn = weaponInfo(s);
   const dist = Math.hypot(target.x - s.x, target.y - s.y);
-  if (dist > 1.0) {
-    // Steer toward target with short path refreshes
+  const engage = wpn.range;
+
+  // Ranged: prefer staying near cover at engagement distance
+  if (wpn.style === "ranged" && dist < engage * 0.45) {
+    const cover = findCover(game, s, target.x, target.y);
+    if (cover && Math.hypot(cover.x - s.x, cover.y - s.y) > 0.8) {
+      goToTile(s, game, cover.x, cover.y);
+      if (s.path.length) {
+        advancePath(s, dt, moveSpeed(s));
+        s.state = "fight";
+        s.thought = "держит дистанцию";
+        return;
+      }
+    }
+  }
+
+  if (dist > engage) {
     s.brain.thinkCd -= dt;
     if (!s.path.length || s.brain.thinkCd <= 0) {
       s.brain.thinkCd = 0.35;
-      goToTile(s, game, Math.floor(target.x), Math.floor(target.y));
+      // Approach to edge of range for spears/bows
+      const ang = Math.atan2(s.y - target.y, s.x - target.x);
+      const tx = Math.floor(target.x + Math.cos(ang) * Math.max(0.5, engage - 0.4));
+      const ty = Math.floor(target.y + Math.sin(ang) * Math.max(0.5, engage - 0.4));
+      goToTile(s, game, walkable(game.world, tx, ty) ? tx : Math.floor(target.x), walkable(game.world, tx, ty) ? ty : Math.floor(target.y));
     }
-    if (s.state === "walk") {
+    if (s.path.length) {
       advancePath(s, dt, moveSpeed(s));
       s.state = "fight";
     } else {
-      // Direct step if path failed
       const dx = target.x - s.x;
       const dy = target.y - s.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -594,26 +672,38 @@ function doFight(s, dt, game, sense) {
         s.y = ny;
       }
     }
-    s.thought = target.kind === "bandit" ? "догоняет бандита" : "догоняет волка";
+    s.thought = wpn.style === "ranged" ? "целит из лука" : "сближается";
     return;
   }
 
   if (s.attackTimer <= 0) {
-    s.attackTimer = 0.7;
-    const dmg = 14 + s.brain.traits.bravery * 12 + (s.brain.role === "guard" ? 8 : 0) + (s.brain.role === "hunter" ? 6 : 0);
+    const speed = wpn.style === "ranged" ? 0.95 : wpn.style === "reach" ? 0.8 : 0.7;
+    s.attackTimer = speed;
+    const skill = s.life?.skills?.combat || 0.1;
+    const coverSpot = findCover(game, s, target.x, target.y);
+    const coverNear = coverSpot && Math.hypot(coverSpot.x - s.x, coverSpot.y - s.y) < 1.6;
+    const dmg = (12 + s.brain.traits.bravery * 10 + skill * 14) * wpn.dmg
+      * (coverNear ? 1 + wpn.coverBonus : 1)
+      * (s.brain.role === "guard" ? 1.15 : 1);
     target.hp -= dmg;
-    s.energy = Math.max(0, s.energy - 4);
-    s.thought = "бьёт";
+    s.energy = Math.max(0, s.energy - (wpn.style === "ranged" ? 3 : 4));
+    if (s.life) s.life.skills.combat = Math.min(1, (s.life.skills.combat || 0) + 0.01);
+    s.thought = wpn.style === "ranged" ? "стреляет" : wpn.style === "reach" ? "колет копьём" : "бьёт";
+    // Cry when hurt badly nearby — already "атакован" if creature bites; mark self under fire
+    if (s.energy < 40) s.thought = `атакован — ${s.thought}`;
     game.fx.push({ kind: "spark", x: target.x, y: target.y, life: 0.25, max: 0.25, seed: Math.random() * 100 });
     if (target.hp <= 0) {
       target.dead = true;
-      game.toast(`${s.name} победил${nameEnding(s.name)} ${target.kind === "bandit" ? "бандита" : "волка"}`);
+      const names = { bandit: "бандита", wolf: "волка", soldier: "воина Орды", rabbit: "кролика" };
+      game.toast(`${s.name} победил${nameEnding(s.name)} ${names[target.kind] || "врага"}`);
       if (target.kind === "wolf" || target.kind === "bandit") {
         game.stock.food += target.kind === "wolf" ? 3 : 2;
       }
+      onQuestEvent(game, "kill", 1);
       s.state = "idle";
       s.brain.commit = 0;
       s.thought = "победа";
+      if (s.life) s.life.fear = Math.max(0, s.life.fear - 0.15);
     }
   }
 }
@@ -813,6 +903,17 @@ function onArrived(s, game) {
     if (s.life) s.life.wet = Math.max(0, s.life.wet - 0.3);
     return;
   }
+  if (job.type === "cover") {
+    s.thought = "в укрытии";
+    if (job.targetId) {
+      startFight(s, game, job.targetId);
+      s.thought = "бьёт из укрытия";
+    } else {
+      s.state = "idle";
+      s.job = null;
+    }
+    return;
+  }
   if (job.type === "social") {
     const partner = game.settlers.find((o) => o.id === job.partnerId && o.state !== "die");
     if (partner && Math.hypot(partner.x - s.x, partner.y - s.y) < 2.2) {
@@ -965,12 +1066,20 @@ function doWork(s, dt, game) {
     s.thought = "мастерит…";
     if (s.life) s.life.skills.craft = Math.min(1, (s.life.skills.craft || 0) + dt * 0.02);
     if (s.workTimer <= 0) {
-      // Craft converts wood → tools value as stone/wood efficiency
       if (game.stock.wood >= 2) {
         game.stock.wood -= 2;
-        game.stock.stone += 1;
+        // Craft weapons for unarmed colonists or upgrade
+        const needy = game.settlers.find((o) => o.state !== "die" && (!o.weapon || o.weapon === "fists"));
+        if (needy && game.stock.stone >= 1) {
+          game.stock.stone -= 1;
+          needy.weapon = needy.brain?.role === "hunter" ? "bow" : "spear";
+          game.toast(`${s.name} выковал${nameEnding(s.name)} ${needy.weapon === "bow" ? "лук" : "копьё"} для ${needy.name}`);
+        } else {
+          s.weapon = s.weapon === "fists" || !s.weapon ? "club" : s.weapon;
+          game.stock.stone += 1;
+          game.toast(`${s.name} смастерил${nameEnding(s.name)} дубину`);
+        }
         if (s.life) s.life.mood = Math.min(1, s.life.mood + 0.08);
-        game.toast(`${s.name} смастерил${nameEnding(s.name)} инструмент`);
       }
       finishJob(s, game);
     }
@@ -1095,6 +1204,7 @@ function releaseJob(s, game) {
     || job.type === "shelter"
     || job.type === "social"
     || job.type === "close_gate"
+    || job.type === "cover"
     || job.type === "tend_farm"
     || job.type === "craft"
     || job.type === "trade"

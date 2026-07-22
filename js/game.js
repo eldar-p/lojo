@@ -22,6 +22,7 @@ import {
   createSettler,
   updateSettler,
 } from "./settlers.js";
+import { createSocialState, updateGroups, updateQuests } from "./social.js";
 import { buildingMaxHp, createWarState, MILITARY_BUILDINGS, updateWar } from "./war.js";
 import {
   countBuildings,
@@ -53,6 +54,7 @@ export function createGame(canvas) {
     brushSize: 1,
     war: createWarState(),
     weather: createWeather(),
+    social: createSocialState(),
     speed: 1,
     time: DAY_LENGTH * 0.3,
     day: 1,
@@ -266,6 +268,8 @@ function update(game, dt) {
   }
 
   updateColonyPlan(game, dt);
+  updateQuests(game, dt);
+  updateGroups(game, dt);
 
   beginSettlerThink(game);
   for (const s of game.settlers) {
