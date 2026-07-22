@@ -468,7 +468,7 @@ button {
 .inspect {
   position: absolute;
   right: 0.85rem;
-  bottom: 0.85rem;
+  bottom: 7.4rem;
   z-index: 5;
   width: min(280px, calc(100vw - 1.7rem));
   padding: 1rem 1.05rem;
