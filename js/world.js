@@ -1,6 +1,6 @@
 import { MAP_H, MAP_W } from "./config.js";
 
-/** @typedef {"grass"|"dirt"|"sand"|"water"} Terrain */
+/** @typedef {"grass"|"dirt"|"sand"|"water"|"snow"|"lava"|"mountain"} Terrain */
 /** @typedef {"tree"|"bush"|"rock"|null} ResourceKind */
 
 /**
@@ -47,6 +47,8 @@ export function createWorld(seed = (Math.random() * 1e9) | 0) {
   const resources = [];
   /** @type {(null|{id:number,type:string,progress:number,done:boolean,x:number,y:number,growth?:number})[][]} */
   const buildings = [];
+  /** @type {number[][]} */
+  const fire = [];
 
   let waterBodies = 0;
 
@@ -54,6 +56,7 @@ export function createWorld(seed = (Math.random() * 1e9) | 0) {
     terrain[y] = [];
     resources[y] = [];
     buildings[y] = [];
+    fire[y] = [];
     for (let x = 0; x < MAP_W; x++) {
       const elev = fbm(x / 18, y / 18, seed);
       const moist = fbm(x / 22 + 40, y / 22 - 10, seed + 99);
@@ -62,10 +65,13 @@ export function createWorld(seed = (Math.random() * 1e9) | 0) {
         t = "water";
         waterBodies++;
       } else if (elev < 0.4) t = "sand";
+      else if (elev > 0.78) t = "mountain";
+      else if (elev > 0.7 && moist < 0.45) t = "snow";
       else if (moist < 0.38) t = "dirt";
 
       terrain[y][x] = t;
       buildings[y][x] = null;
+      fire[y][x] = 0;
 
       let kind = null;
       let amount = 0;
@@ -107,6 +113,7 @@ export function createWorld(seed = (Math.random() * 1e9) | 0) {
     terrain,
     resources,
     buildings,
+    fire,
     nextBuildingId: 1,
     waterBodies,
   };
@@ -141,7 +148,8 @@ export function inBounds(x, y) {
 
 export function walkable(world, x, y) {
   if (!inBounds(x, y)) return false;
-  if (world.terrain[y][x] === "water") return false;
+  const t = world.terrain[y][x];
+  if (t === "water" || t === "lava" || t === "mountain") return false;
   const b = world.buildings[y][x];
   if (b && b.done && (b.type === "hut" || b.type === "stockpile")) return false;
   return true;
@@ -270,7 +278,8 @@ export function countBuildings(world, type, onlyDone = true) {
 
 export function findBuildSite(world, x, y) {
   if (!inBounds(x, y)) return false;
-  if (world.terrain[y][x] === "water") return false;
+  const t = world.terrain[y][x];
+  if (t === "water" || t === "lava" || t === "mountain") return false;
   if (world.buildings[y][x]) return false;
   if (world.resources[y][x].kind) return false;
   return true;

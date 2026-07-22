@@ -27,13 +27,36 @@ export const YIELD = {
 export const RECRUIT_COST = { food: 20 };
 
 export const TOOL_HINTS = {
-  select: "Кликни по человеку или зданию",
+  select: "Кликни по человеку, зверю или зданию",
   hut: "Домик для сна — 12 дерева",
   farm: "Грядка даёт еду — 6 дерева",
   stockpile: "Склад хранит запасы — 8 дерева",
   chop: "Отметь дерево на рубку",
   gather: "Отметь куст с ягодами",
   mine: "Отметь камень для добычи",
+  paint_grass: "Кисть: трава",
+  paint_sand: "Кисть: песок",
+  paint_dirt: "Кисть: земля",
+  paint_water: "Кисть: вода",
+  paint_snow: "Кисть: снег",
+  paint_lava: "Кисть: лава",
+  paint_mountain: "Кисть: горы",
+  plant_tree: "Посадить деревья",
+  plant_bush: "Посадить ягоды",
+  plant_rock: "Положить камни",
+  erase: "Стереть клетку в землю",
+  spawn_human: "Призвать человека (бесплатно)",
+  spawn_rabbit: "Призвать кролика",
+  spawn_wolf: "Призвать волка",
+  spawn_bandit: "Призвать бандита",
+  rain: "Дождь: тушит огонь, растит еду",
+  bless: "Благословение: еда и силы",
+  lightning: "Молния",
+  meteor: "Метеорит",
+  fire: "Поджечь мир",
+  bomb: "Взрыв",
+  tornado: "Торнадо",
+  death: "Стереть жизнь",
 };
 
 export const TIME_LABELS = [
