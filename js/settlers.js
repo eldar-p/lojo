@@ -15,10 +15,12 @@ import {
   updateLivingNeeds,
 } from "./life.js";
 import {
+  assessThreat,
   assignWeapon,
   exchangeSocial,
   findCover,
   formDefenseGroup,
+  isInCover,
   onQuestEvent,
   weaponInfo,
 } from "./social.js";
@@ -562,24 +564,42 @@ function enactSeekCover(s, game, sense, fromId, targetId) {
 function enactCallHelp(s, game, sense, fromId, targetId) {
   releaseJob(s, game);
   s.thought = "зовёт стражу!";
-  if (s.life) s.life.fear = Math.min(1, s.life.fear + 0.15);
+  if (s.life) {
+    s.life.fear = Math.min(1, s.life.fear + 0.15);
+    s.life.callingHelp = true;
+    s.life.underAttack = true;
+  }
   const threat = sense.threats.find((t) => t.id === fromId) || nearestThreat(sense, s.x, s.y, 9)?.unit;
-  const guards = sense.alive.filter((a) => a.id !== s.id && (a.brain.role === "guard" || a.military || a.brain.traits.bravery > 0.6));
-  const near = alliesNearby(sense, s.x, s.y, 9).filter((a) => a.id !== s.id);
-  const helpers = (guards.length ? guards : near).slice(0, 3);
+  if (threat) s.brain.attackerId = threat.id;
+
+  const candidates = sense.alive
+    .filter((a) => a.id !== s.id && (a.brain.role === "guard" || a.military || a.brain.traits.bravery > 0.55))
+    .map((a) => ({ a, d: Math.hypot(a.x - s.x, a.y - s.y) }))
+    .filter((x) => x.d < 14)
+    .sort((u, v) => u.d - v.d);
+
+  let helpers = candidates.slice(0, 3).map((x) => x.a);
+  if (!helpers.length) {
+    helpers = alliesNearby(sense, s.x, s.y, 8)
+      .filter((a) => a.id !== s.id)
+      .sort((u, v) => Math.hypot(u.x - s.x, u.y - s.y) - Math.hypot(v.x - s.x, v.y - s.y))
+      .slice(0, 2);
+  }
+
   if (helpers.length) formDefenseGroup(game, s, helpers);
+  const tid = targetId || threat?.id;
   for (const h of helpers) {
     h.brain.commit = 0;
     h.brain.thinkCd = 0;
     h.thought = `слышит зов ${s.name}`;
-    if (threat) {
-      h.brain.goal = { type: "fight", thought: `бежит на помощь ${s.name}`, payload: { targetId: threat.id, allyId: s.id } };
-      h.brain.commit = 2.5;
-      startFight(h, game, threat.id);
+    if (tid) {
+      h.brain.attackerId = tid;
+      h.brain.goal = { type: "fight", thought: `бежит на помощь ${s.name}`, payload: { targetId: tid, allyId: s.id } };
+      h.brain.commit = 2.8;
+      startFight(h, game, tid);
     }
   }
-  // Caller takes cover while waiting
-  if (threat) enactSeekCover(s, game, sense, fromId, targetId);
+  if (threat) enactSeekCover(s, game, sense, fromId, tid);
   else softWander(s, game, sense);
 }
 
@@ -613,8 +633,10 @@ function startFight(s, game, targetId) {
   releaseJob(s, game);
   assignWeapon(s);
   s.brain.targetId = targetId;
+  s.brain.attackerId = targetId;
   s.state = "fight";
   s.thought = "в бою";
+  if (s.life) s.life.underAttack = true;
 }
 
 function doFight(s, dt, game, sense) {
@@ -627,7 +649,34 @@ function doFight(s, dt, game, sense) {
     s.state = "idle";
     s.brain.commit = 0;
     s.thought = "угроза ушла";
+    if (s.life) {
+      s.life.underAttack = false;
+      s.life.callingHelp = false;
+    }
     return;
+  }
+
+  // Mid-fight self-preservation — don't lock into a death spiral
+  s._fightReplan = (s._fightReplan || 0) - dt;
+  if (s._fightReplan <= 0) {
+    s._fightReplan = 0.55;
+    const threat = { unit: target, dist: Math.hypot(target.x - s.x, target.y - s.y) };
+    const friends = alliesNearby(sense, s.x, s.y, 5).filter((a) => a.id !== s.id);
+    const decision = assessThreat(s, threat, friends, game);
+    if (decision.action === "flee" || s.energy < 20) {
+      s.state = "idle";
+      s.brain.commit = 0;
+      enactFlee(s, game, sense, target.id);
+      return;
+    }
+    if (decision.action === "call_help" && !s.life?.callingHelp) {
+      enactCallHelp(s, game, sense, target.id, target.id);
+      return;
+    }
+    if (decision.action === "cover" && !isInCover(game, s)) {
+      enactSeekCover(s, game, sense, target.id, target.id);
+      return;
+    }
   }
 
   const wpn = weaponInfo(s);
@@ -677,20 +726,20 @@ function doFight(s, dt, game, sense) {
   }
 
   if (s.attackTimer <= 0) {
-    const speed = wpn.style === "ranged" ? 0.95 : wpn.style === "reach" ? 0.8 : 0.7;
+    const speed = wpn.style === "ranged" ? 1.05 : wpn.style === "reach" ? 0.85 : 0.75;
     s.attackTimer = speed;
     const skill = s.life?.skills?.combat || 0.1;
-    const coverSpot = findCover(game, s, target.x, target.y);
-    const coverNear = coverSpot && Math.hypot(coverSpot.x - s.x, coverSpot.y - s.y) < 1.6;
-    const dmg = (12 + s.brain.traits.bravery * 10 + skill * 14) * wpn.dmg
+    const coverNear = isInCover(game, s);
+    const dmg = (11 + s.brain.traits.bravery * 9 + skill * 12) * wpn.dmg
       * (coverNear ? 1 + wpn.coverBonus : 1)
-      * (s.brain.role === "guard" ? 1.15 : 1);
+      * (s.brain.role === "guard" ? 1.12 : 1);
     target.hp -= dmg;
-    s.energy = Math.max(0, s.energy - (wpn.style === "ranged" ? 3 : 4));
-    if (s.life) s.life.skills.combat = Math.min(1, (s.life.skills.combat || 0) + 0.01);
+    s.energy = Math.max(0, s.energy - (wpn.style === "ranged" ? 2.2 : 3));
+    if (s.life) {
+      s.life.skills.combat = Math.min(1, (s.life.skills.combat || 0) + 0.01);
+      s.life.underAttack = true;
+    }
     s.thought = wpn.style === "ranged" ? "стреляет" : wpn.style === "reach" ? "колет копьём" : "бьёт";
-    // Cry when hurt badly nearby — already "атакован" if creature bites; mark self under fire
-    if (s.energy < 40) s.thought = `атакован — ${s.thought}`;
     game.fx.push({ kind: "spark", x: target.x, y: target.y, life: 0.25, max: 0.25, seed: Math.random() * 100 });
     if (target.hp <= 0) {
       target.dead = true;
@@ -703,7 +752,12 @@ function doFight(s, dt, game, sense) {
       s.state = "idle";
       s.brain.commit = 0;
       s.thought = "победа";
-      if (s.life) s.life.fear = Math.max(0, s.life.fear - 0.15);
+      if (s.life) {
+        s.life.fear = Math.max(0, s.life.fear - 0.2);
+        s.life.underAttack = false;
+        s.life.callingHelp = false;
+      }
+      s.brain.attackerId = null;
     }
   }
 }
@@ -905,12 +959,17 @@ function onArrived(s, game) {
   }
   if (job.type === "cover") {
     s.thought = "в укрытии";
+    s.job = null;
+    // Hold cover briefly, then fight from it (ranged/reach advantage)
     if (job.targetId) {
-      startFight(s, game, job.targetId);
+      s.state = "fight";
+      s.brain.targetId = job.targetId;
+      s.brain.attackerId = job.targetId;
+      s.attackTimer = 0.35;
       s.thought = "бьёт из укрытия";
+      if (s.life) s.life.underAttack = true;
     } else {
       s.state = "idle";
-      s.job = null;
     }
     return;
   }

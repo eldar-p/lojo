@@ -195,6 +195,8 @@ function paintTile(game, tool, x, y) {
     cell.kind = kind;
     cell.amount = kind === "tree" ? 4 : 3;
     cell.reserved = false;
+    if (kind === "tree") onQuestEvent(game, "plant", 1);
+    if (kind === "bush") onQuestEvent(game, "bless", 0.5);
     return;
   }
 

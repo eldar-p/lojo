@@ -179,8 +179,14 @@ export function decideGoal(s, game, sense) {
   // --- Danger: self-preservation (flee / cover / call help / attack) ---
   assignWeapon(s);
   if (threat) {
-    const decision = assessThreat(s, threat, allies.filter((a) => a.id !== s.id), game);
-    if (decision.action === "attack" && hpProxy > 30) {
+    const friends = allies.filter((a) => a.id !== s.id);
+    let decision = assessThreat(s, threat, friends, game);
+    // Low stamina cannot commit to attack even if scored highest
+    if (decision.action === "attack" && (hpProxy < 32 || s.energy < 24)) {
+      decision = { action: fear > 0.35 || friends.length < 1 ? "flee" : "call_help", score: 120 };
+    }
+
+    if (decision.action === "attack") {
       goals.push({
         type: "fight",
         score: 105 + traits.bravery * 45 + (role === "guard" ? 30 : 0) - threat.dist * 3 - fear * 12,
@@ -201,33 +207,33 @@ export function decideGoal(s, game, sense) {
         thought: "зовёт стражу!",
         payload: { fromId: threat.unit.id, targetId: threat.unit.id },
       });
-    } else if (threat.dist < 5.5) {
+    } else {
       goals.push({
         type: "flee",
-        score: 130 + (5 - threat.dist) * 15 - traits.bravery * 20 + fear * 30,
+        score: 130 + (5 - Math.min(5, threat.dist)) * 15 - traits.bravery * 20 + fear * 30,
         thought: "убегает",
         payload: { fromId: threat.unit.id },
       });
     }
 
-    // Answer cries for help / defend group mates
+    // Answer cries for help / defend group mates — use ally's attacker id when known
     for (const a of sense.alive) {
       if (a.id === s.id) continue;
       const sameGroup = life.groupId && a.life?.groupId === life.groupId;
-      if (a.thought?.includes("атакован") || a.thought?.includes("зовёт") || a.state === "fight" || (a.life?.fear || 0) > 0.6 || sameGroup && threat.dist < 8) {
-        const d = Math.hypot(a.x - s.x, a.y - s.y);
-        if (d < 9) {
-          goals.push({
-            type: "fight",
-            score: 75 + traits.empathy * 40 + traits.bravery * 20 - d * 3 + (sameGroup ? 25 : 0) + (role === "guard" ? 20 : 0),
-            thought: `защищает ${a.name}`,
-            payload: { targetId: threat.unit.id, allyId: a.id },
-          });
-        }
-      }
+      const needsHelp = a.life?.underAttack || a.life?.callingHelp || a.state === "fight" || (a.life?.fear || 0) > 0.65;
+      if (!needsHelp && !(sameGroup && threat.dist < 8)) continue;
+      const d = Math.hypot(a.x - s.x, a.y - s.y);
+      if (d > 10) continue;
+      const allyThreat = nearestThreat(sense, a.x, a.y, 7);
+      const targetId = a.brain?.attackerId || allyThreat?.unit?.id || threat.unit.id;
+      goals.push({
+        type: "fight",
+        score: 78 + traits.empathy * 40 + traits.bravery * 20 - d * 3 + (sameGroup ? 25 : 0) + (role === "guard" ? 22 : 0),
+        thought: `защищает ${a.name}`,
+        payload: { targetId, allyId: a.id },
+      });
     }
 
-    // Distrustful NPCs hesitate to fight near cruel gods (low playerRep) unless bravery high
     if ((life.playerRep ?? 0) < -0.4 && traits.bravery < 0.55) {
       for (const g of goals) {
         if (g.type === "fight") g.score -= 25;

@@ -205,9 +205,12 @@ function updateWolf(c, game, dt, pack) {
     const d = Math.hypot(s.x - c.x, s.y - c.y);
     if (d > 10) continue;
     const guards = game.settlers.filter((o) => o.state !== "die" && Math.hypot(o.x - s.x, o.y - s.y) < 3.5).length;
-    let score = 18 - d - guards * 10 + (s.energy < 30 ? 12 : 0);
-    score += pack.length * 3;
-    if (s.brain?.role === "hunter") score -= 8;
+    // Prefer isolated / sleeping / weak settlers over wildlife when pack is large
+    let score = 22 - d - guards * 8 + (s.energy < 35 ? 10 : 0);
+    if (s.state === "sleep") score += 10;
+    if (guards <= 1) score += 8;
+    score += pack.length * 2;
+    if (s.brain?.role === "hunter" || s.weapon === "spear") score -= 10;
     if (score > best) {
       best = score;
       prey = s;
@@ -322,20 +325,52 @@ function updateBandit(c, game, dt) {
 }
 
 function bite(c, game, prey) {
-  c.cooldown = c.kind === "bandit" ? 0.95 : 1.05;
+  c.cooldown = c.kind === "bandit" ? 1.05 : 1.15;
   if (prey.kind) {
     prey.hp -= c.damage;
     if (prey.hp <= 0) prey.dead = true;
   } else {
-    prey.energy = Math.max(0, prey.energy - c.damage);
-    prey.hunger = Math.max(0, prey.hunger - c.damage * 0.3);
-    prey.thought = c.kind === "bandit" ? "атакован бандитом" : "атакован волком";
+    // Cover reduces incoming damage; less lethal bites so AI can react
+    let dmg = c.damage * 0.55;
+    const ox = Math.floor(prey.x);
+    const oy = Math.floor(prey.y);
+    let covered = false;
+    for (let dy = -1; dy <= 1 && !covered; dy++) {
+      for (let dx = -1; dx <= 1 && !covered; dx++) {
+        if (!dx && !dy) continue;
+        const x = ox + dx;
+        const y = oy + dy;
+        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+        if (game.world.resources[y][x]?.kind === "tree") covered = true;
+        const b = game.world.buildings[y]?.[x];
+        if (b?.done && (b.type === "wall" || b.type === "tower" || b.type === "gate")) covered = true;
+      }
+    }
+    if (covered) dmg *= 0.45;
+    if (prey.weapon === "spear") dmg *= 0.85;
+
+    prey.energy = Math.max(0, prey.energy - dmg);
+    prey.hunger = Math.max(0, prey.hunger - dmg * 0.22);
+    prey.thought = c.kind === "bandit" ? "атакован бандитом" : c.kind === "soldier" ? "атакован Ордой" : "атакован волком";
     prey.path = [];
+    if (prey.life) {
+      prey.life.underAttack = true;
+      prey.life.fear = Math.min(1, (prey.life.fear || 0) + 0.22);
+      prey.life.mood = Math.max(0, (prey.life.mood || 0.5) - 0.08);
+    }
+    if (prey.brain) {
+      prey.brain.attackerId = c.id;
+      prey.brain.commit = Math.min(prey.brain.commit || 0, 0.2);
+      prey.brain.thinkCd = 0;
+    }
     if (prey.state === "sleep") {
+      prey.state = "idle";
+    }
+    // Panic break out of tunnel-vision fight when nearly dead
+    if (prey.energy < 25 && prey.state === "fight") {
       prey.state = "idle";
       prey.brain && (prey.brain.commit = 0);
     }
-    // Knockback
     const ang = Math.atan2(prey.y - c.y, prey.x - c.x);
     const nx = prey.x + Math.cos(ang) * 0.35;
     const ny = prey.y + Math.sin(ang) * 0.35;
@@ -343,7 +378,7 @@ function bite(c, game, prey) {
       prey.x = nx;
       prey.y = ny;
     }
-    if (prey.energy < 8) {
+    if (prey.energy < 5) {
       prey.state = "die";
       prey.thought = "убит";
     }

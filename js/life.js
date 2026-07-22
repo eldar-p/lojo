@@ -232,6 +232,16 @@ export function updateLivingNeeds(s, dt, game, sense) {
   s.life.socialNeed = Math.min(1, s.life.socialNeed + dt * 0.012 * (0.5 + s.brain.traits.empathy));
   s.life.chatCd = Math.max(0, (s.life.chatCd || 0) - dt);
 
+  // Clear combat flags when safe
+  if (s.life.underAttack || s.life.callingHelp) {
+    const dangerNear = sense?.threats?.some((t) => Math.hypot(t.x - s.x, t.y - s.y) < 6);
+    if (!dangerNear && s.state !== "fight") {
+      s.life.underAttack = false;
+      s.life.callingHelp = false;
+      if (s.brain) s.brain.attackerId = null;
+    }
+  }
+
   // Emotion decay toward baseline
   const base = 0.45 + s.brain.traits.empathy * 0.15 - s.life.fear * 0.25;
   s.life.mood += (base - s.life.mood) * Math.min(1, dt * 0.08);
@@ -421,5 +431,7 @@ export function createLifeState(id) {
     memories: [],
     heardRumors: [],
     groupId: null,
+    underAttack: false,
+    callingHelp: false,
   };
 }
