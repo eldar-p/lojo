@@ -468,7 +468,7 @@ button {
 .inspect {
   position: absolute;
   right: 0.85rem;
-  bottom: 0.85rem;
+  bottom: 7.4rem;
   z-index: 5;
   width: min(280px, calc(100vw - 1.7rem));
   padding: 1rem 1.05rem;
@@ -525,10 +525,140 @@ button {
 .bar--energy > i { background: linear-gradient(90deg, #3a6d88, #6fad78); }
 .bar--progress > i { background: linear-gradient(90deg, #8a5a36, #e0a045); }
 
+.brush-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+}
+
+.brush {
+  padding: 0.45rem 0.2rem;
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.brush.active {
+  background: rgba(111, 173, 120, 0.25);
+  color: var(--leaf-bright);
+}
+
+.god-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: min(920px, calc(100vw - 1.5rem));
+  padding: 0.55rem 0.65rem 0.65rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+  animation: rise 0.45s ease both;
+}
+
+.god-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.god-tab {
+  flex: 1;
+  padding: 0.4rem 0.35rem;
+  border-radius: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.god-tab.active {
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--leaf-bright), var(--leaf));
+}
+
+.god-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+  scrollbar-width: thin;
+}
+
+.god-tool {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 4.2rem;
+  padding: 0.45rem 0.4rem;
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.god-tool:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.god-tool.active {
+  border-color: rgba(159, 212, 154, 0.45);
+  background: rgba(111, 173, 120, 0.18);
+  color: var(--leaf-bright);
+}
+
+.god-swatch {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.3rem;
+  display: block;
+  background: #6fad78;
+}
+
+.god-swatch--paint_grass { background: #3f6b49; }
+.god-swatch--paint_sand { background: #c2a66e; }
+.god-swatch--paint_dirt { background: #6a5238; }
+.god-swatch--paint_water { background: #2f5f78; }
+.god-swatch--paint_snow { background: #d9e4ef; }
+.god-swatch--paint_lava { background: linear-gradient(180deg, #e06020, #8a2808); }
+.god-swatch--paint_mountain { background: #5c6570; }
+.god-swatch--plant_tree { background: radial-gradient(circle at 50% 35%, #3f8550 40%, #5a3a22 41%); }
+.god-swatch--plant_bush { background: radial-gradient(circle at 40% 40%, #c45a7a 20%, #3d6e3a 21%); }
+.god-swatch--plant_rock { background: #7d8790; border-radius: 40% 50% 45% 55%; }
+.god-swatch--erase { background: repeating-linear-gradient(45deg, #444, #444 3px, #777 3px, #777 6px); }
+.god-swatch--spawn_human { background: linear-gradient(180deg, #e7c29a 40%, #4a7cbf 41%); }
+.god-swatch--spawn_rabbit { background: #d9c2a0; border-radius: 50%; }
+.god-swatch--spawn_wolf { background: #6b7280; }
+.god-swatch--spawn_bandit { background: #8b3a3a; }
+.god-swatch--rain { background: linear-gradient(180deg, #7eb0c8, #2f5f78); }
+.god-swatch--bless { background: radial-gradient(circle, #f0c27a, #6fad78); }
+.god-swatch--lightning { background: linear-gradient(180deg, #f5f8ff, #7eb0c8); }
+.god-swatch--meteor { background: radial-gradient(circle, #f0c27a, #c44a1a); }
+.god-swatch--fire { background: linear-gradient(180deg, #f0c27a, #d36b4f); }
+.god-swatch--bomb { background: #2a3038; box-shadow: inset 0 0 0 2px #d36b4f; }
+.god-swatch--tornado { background: conic-gradient(from 0deg, #c9d7e6, #5c6570, #c9d7e6); border-radius: 50%; }
+.god-swatch--death { background: #1a1220; }
+.god-swatch--select { border: 2px solid #e8f0e6; background: transparent; transform: rotate(12deg); }
+.god-swatch--hut { background: #8a5a36; clip-path: polygon(50% 0, 100% 38%, 100% 100%, 0 100%, 0 38%); }
+.god-swatch--farm { background: linear-gradient(90deg, #6a9a45 0 33%, #8a5a36 33% 66%, #6a9a45 66%); }
+.god-swatch--stock { background: #6d7c88; }
+.god-swatch--stockpile { background: #6d7c88; }
+.god-swatch--chop { background: #8a5a36; }
+.god-swatch--gather { background: #c45a7a; border-radius: 50%; }
+.god-swatch--mine { background: #7a848e; }
+
 .toast-stack {
   position: absolute;
   left: 50%;
-  bottom: 1.1rem;
+  bottom: 7.5rem;
   transform: translateX(-50%);
   z-index: 8;
   display: flex;
@@ -584,26 +714,13 @@ button {
 
 @media (max-width: 720px) {
   .hud-side {
-    top: auto;
-    bottom: 0.75rem;
-    left: 0.75rem;
-    right: 0.75rem;
-    width: auto;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0.5rem 0.75rem;
-    align-items: start;
+    top: 4.2rem;
+    width: min(160px, calc(100vw - 1.5rem));
+    padding: 0.65rem;
   }
 
-  .hud-side__label:nth-of-type(2),
-  .speed-row,
   .btn--recruit {
-    grid-column: 2;
-  }
-
-  .tool-grid {
-    grid-column: 1;
-    grid-row: 2 / span 3;
+    display: none;
   }
 
   .inspect {
@@ -612,6 +729,25 @@ button {
 
   .clock #day-label {
     display: none;
+  }
+
+  .god-bar {
+    bottom: 0.4rem;
+    padding: 0.45rem;
+  }
+
+  .god-tab {
+    font-size: 0.7rem;
+    padding: 0.35rem 0.2rem;
+  }
+
+  .god-tool {
+    min-width: 3.6rem;
+    font-size: 0.64rem;
+  }
+
+  .toast-stack {
+    bottom: 8.8rem;
   }
 
   .boot__brand {
