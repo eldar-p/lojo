@@ -262,12 +262,18 @@ function updateInspect() {
   const { game } = api;
   if (game.selected && game.selected.state !== "die") {
     const s = game.selected;
-    el.title.textContent = s.name;
-    el.body.textContent = `Сейчас: ${s.thought}`;
+    const role = s.brain?.roleName || "Житель";
+    const goal = s.brain?.goal?.type || s.state;
+    el.title.textContent = `${s.name} · ${role}`;
+    el.body.textContent = `Сейчас: ${s.thought} (${goal})`;
     el.bars.classList.remove("hidden");
+    const brav = ((s.brain?.traits?.bravery || 0) * 100).toFixed(0);
+    const dil = ((s.brain?.traits?.diligence || 0) * 100).toFixed(0);
     el.bars.innerHTML = `
       <div class="bar-row"><span>Голод</span><div class="bar bar--hunger"><i style="width:${s.hunger.toFixed(0)}%"></i></div></div>
       <div class="bar-row"><span>Силы</span><div class="bar bar--energy"><i style="width:${s.energy.toFixed(0)}%"></i></div></div>
+      <div class="bar-row"><span>Храбрость</span><div class="bar bar--progress"><i style="width:${brav}%"></i></div></div>
+      <div class="bar-row"><span>Труд</span><div class="bar bar--progress"><i style="width:${dil}%"></i></div></div>
     `;
     return;
   }

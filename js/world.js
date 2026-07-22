@@ -155,32 +155,36 @@ export function walkable(world, x, y) {
   return true;
 }
 
+/** Min-heap A* with fire/snow costs — much faster & smarter than sort-each-step */
 export function findPath(world, sx, sy, tx, ty) {
   sx |= 0;
   sy |= 0;
   tx |= 0;
   ty |= 0;
   if (!inBounds(tx, ty)) return null;
-  // Allow standing on target even if building/resource occupies it
   if (sx === tx && sy === ty) return [];
 
   const key = (x, y) => y * MAP_W + x;
-  const open = [{ x: sx, y: sy, g: 0, f: heuristic(sx, sy, tx, ty) }];
-  const came = new Map();
-  const gScore = new Map([[key(sx, sy), 0]]);
-  const closed = new Set();
+  const open = new MinHeap();
+  open.push(sx, sy, 0, heuristic(sx, sy, tx, ty));
+  const came = new Int32Array(MAP_W * MAP_H).fill(-1);
+  const gScore = new Float32Array(MAP_W * MAP_H).fill(1e9);
+  gScore[key(sx, sy)] = 0;
+  const closed = new Uint8Array(MAP_W * MAP_H);
 
   const dirs = [
     [1, 0], [-1, 0], [0, 1], [0, -1],
     [1, 1], [1, -1], [-1, 1], [-1, -1],
   ];
 
-  while (open.length) {
-    open.sort((a, b) => a.f - b.f);
-    const cur = open.shift();
+  let expansions = 0;
+  while (open.size) {
+    const cur = open.pop();
+    if (!cur) break;
     const ck = key(cur.x, cur.y);
-    if (closed.has(ck)) continue;
-    closed.add(ck);
+    if (closed[ck]) continue;
+    closed[ck] = 1;
+    expansions++;
 
     if (cur.x === tx && cur.y === ty) {
       const path = [];
@@ -188,10 +192,10 @@ export function findPath(world, sx, sy, tx, ty) {
       let cy = ty;
       while (!(cx === sx && cy === sy)) {
         path.push({ x: cx, y: cy });
-        const prev = came.get(key(cx, cy));
-        if (!prev) break;
-        cx = prev.x;
-        cy = prev.y;
+        const prev = came[key(cx, cy)];
+        if (prev < 0) break;
+        cx = prev % MAP_W;
+        cy = (prev / MAP_W) | 0;
       }
       path.reverse();
       return path;
@@ -208,25 +212,89 @@ export function findPath(world, sx, sy, tx, ty) {
         if (!walkable(world, cur.x, cur.y + dy) && !isTarget) continue;
       }
       const nk = key(nx, ny);
-      if (closed.has(nk)) continue;
-      const step = dx !== 0 && dy !== 0 ? 1.414 : 1;
+      if (closed[nk]) continue;
+
+      let step = dx !== 0 && dy !== 0 ? 1.414 : 1;
+      const terrain = world.terrain[ny][nx];
+      if (terrain === "snow") step *= 1.35;
+      if (terrain === "sand") step *= 1.1;
+      const fire = world.fire?.[ny]?.[nx] || 0;
+      if (fire > 0.2) step += 6 + fire * 8;
+      // Soft avoid lava adjacency
+      if (hasLavaNear(world, nx, ny)) step += 2.5;
+
       const tg = cur.g + step;
-      if (tg < (gScore.get(nk) ?? Infinity)) {
-        came.set(nk, { x: cur.x, y: cur.y });
-        gScore.set(nk, tg);
-        open.push({ x: nx, y: ny, g: tg, f: tg + heuristic(nx, ny, tx, ty) });
+      if (tg < gScore[nk]) {
+        came[nk] = ck;
+        gScore[nk] = tg;
+        open.push(nx, ny, tg, tg + heuristic(nx, ny, tx, ty));
       }
     }
 
-    if (closed.size > 2500) break;
+    if (expansions > 3200) break;
   }
   return null;
+}
+
+function hasLavaNear(world, x, y) {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (world.terrain[ny][nx] === "lava") return true;
+    }
+  }
+  return false;
 }
 
 function heuristic(ax, ay, bx, by) {
   const dx = Math.abs(ax - bx);
   const dy = Math.abs(ay - by);
   return Math.max(dx, dy) + Math.min(dx, dy) * 0.414;
+}
+
+class MinHeap {
+  constructor() {
+    this.data = [];
+  }
+  get size() {
+    return this.data.length;
+  }
+  push(x, y, g, f) {
+    const node = { x, y, g, f };
+    this.data.push(node);
+    let i = this.data.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this.data[p].f <= this.data[i].f) break;
+      const tmp = this.data[p];
+      this.data[p] = this.data[i];
+      this.data[i] = tmp;
+      i = p;
+    }
+  }
+  pop() {
+    if (!this.data.length) return null;
+    const top = this.data[0];
+    const last = this.data.pop();
+    if (!this.data.length) return top;
+    this.data[0] = last;
+    let i = 0;
+    for (;;) {
+      const l = i * 2 + 1;
+      const r = l + 1;
+      let smallest = i;
+      if (l < this.data.length && this.data[l].f < this.data[smallest].f) smallest = l;
+      if (r < this.data.length && this.data[r].f < this.data[smallest].f) smallest = r;
+      if (smallest === i) break;
+      const tmp = this.data[i];
+      this.data[i] = this.data[smallest];
+      this.data[smallest] = tmp;
+      i = smallest;
+    }
+    return top;
+  }
 }
 
 export function nearestResource(world, x, y, kind, onlyMarked = false, marks = null) {

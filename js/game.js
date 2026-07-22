@@ -15,6 +15,7 @@ import {
 } from "./powers.js";
 import { createRenderer } from "./renderer.js";
 import {
+  beginSettlerThink,
   bindSettler,
   createSettler,
   updateSettler,
@@ -250,6 +251,7 @@ function update(game, dt) {
     }
   }
 
+  beginSettlerThink(game);
   for (const s of game.settlers) {
     if (s.state !== "die") updateSettler(s, dt, game);
   }
