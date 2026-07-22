@@ -201,11 +201,14 @@ export function createRenderer(canvas) {
 }
 
 function isBuildTool(tool) {
-  return tool === "hut" || tool === "farm" || tool === "stockpile";
+  return ["hut", "farm", "stockpile", "wall", "gate", "tower", "barracks"].includes(tool);
 }
 
 function isPowerTool(tool) {
-  return ["lightning", "meteor", "bomb", "tornado", "death", "spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit"].includes(tool);
+  return [
+    "lightning", "meteor", "bomb", "tornado", "death",
+    "spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit", "spawn_army",
+  ].includes(tool);
 }
 
 function drawResource(ctx, cell, x, y, ts, t, tx, ty) {
@@ -276,6 +279,48 @@ function drawBuilding(ctx, b, x, y, ts) {
     ctx.fillRect(x + ts * 0.18, y + ts * 0.35, ts * 0.64, ts * 0.42);
     ctx.fillStyle = "#8a949e";
     ctx.fillRect(x + ts * 0.18, y + ts * 0.3, ts * 0.64, ts * 0.1);
+  } else if (b.type === "wall") {
+    ctx.fillStyle = "#6a7178";
+    ctx.fillRect(x + ts * 0.12, y + ts * 0.2, ts * 0.76, ts * 0.62);
+    ctx.fillStyle = "#8a929a";
+    ctx.fillRect(x + ts * 0.12, y + ts * 0.2, ts * 0.76, ts * 0.12);
+  } else if (b.type === "gate") {
+    ctx.fillStyle = "#6a7178";
+    ctx.fillRect(x + ts * 0.1, y + ts * 0.15, ts * 0.22, ts * 0.7);
+    ctx.fillRect(x + ts * 0.68, y + ts * 0.15, ts * 0.22, ts * 0.7);
+    ctx.fillStyle = "#8a5a36";
+    ctx.fillRect(x + ts * 0.32, y + ts * 0.28, ts * 0.36, ts * 0.5);
+  } else if (b.type === "tower") {
+    ctx.fillStyle = "#5c6570";
+    ctx.fillRect(x + ts * 0.28, y + ts * 0.35, ts * 0.44, ts * 0.5);
+    ctx.fillStyle = "#b24a3a";
+    ctx.beginPath();
+    ctx.moveTo(x + ts * 0.18, y + ts * 0.38);
+    ctx.lineTo(x + ts * 0.5, y + ts * 0.1);
+    ctx.lineTo(x + ts * 0.82, y + ts * 0.38);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#f0c27a";
+    ctx.fillRect(x + ts * 0.42, y + ts * 0.48, ts * 0.16, ts * 0.14);
+  } else if (b.type === "barracks") {
+    ctx.fillStyle = "#5a4030";
+    ctx.fillRect(x + ts * 0.14, y + ts * 0.32, ts * 0.72, ts * 0.5);
+    ctx.fillStyle = "#3d4a38";
+    ctx.fillRect(x + ts * 0.14, y + ts * 0.22, ts * 0.72, ts * 0.14);
+    ctx.fillStyle = "#c45a4a";
+    ctx.fillRect(x + ts * 0.4, y + ts * 0.08, ts * 0.08, ts * 0.18);
+  }
+
+  // HP chip for damaged military buildings
+  if (b.done && b.hp != null && b.hp < (b.type === "wall" ? 80 : 200)) {
+    const max = b.type === "wall" ? 80 : b.type === "tower" ? 120 : b.type === "gate" ? 100 : b.type === "barracks" ? 140 : 90;
+    if (b.hp < max * 0.95) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(x + ts * 0.15, y + ts * 0.05, ts * 0.7, 3);
+      ctx.fillStyle = "#d36b4f";
+      ctx.fillRect(x + ts * 0.15, y + ts * 0.05, ts * 0.7 * Math.max(0, b.hp / max), 3);
+    }
   }
 
   if (!b.done) {
@@ -342,6 +387,15 @@ function drawSettler(ctx, s, p, zoom, selected) {
     ctx.font = `${10 * scale}px Figtree, sans-serif`;
     ctx.fillText("z", 8 * scale, -14 * scale);
   }
+  if (s.military) {
+    ctx.fillStyle = "#d36b4f";
+    ctx.beginPath();
+    ctx.moveTo(-7 * scale, -18 * scale);
+    ctx.lineTo(-3 * scale, -22 * scale);
+    ctx.lineTo(1 * scale, -18 * scale);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   ctx.restore();
 }
@@ -391,7 +445,7 @@ function drawCreature(ctx, c, p, zoom, selected, t) {
     ctx.lineTo(-2 * scale, -9 * scale);
     ctx.lineTo(0, -4 * scale);
     ctx.fill();
-  } else if (c.kind === "bandit") {
+  } else if (c.kind === "bandit" || c.kind === "soldier") {
     ctx.fillStyle = c.color;
     roundRect(ctx, -5 * scale, -7 * scale, 10 * scale, 12 * scale, 2 * scale);
     ctx.fill();
@@ -399,8 +453,17 @@ function drawCreature(ctx, c, p, zoom, selected, t) {
     ctx.beginPath();
     ctx.arc(0, -11 * scale, 4 * scale, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#2a3038";
+    ctx.fillStyle = c.kind === "soldier" ? "#2a1a20" : "#2a3038";
     ctx.fillRect(-6 * scale, -14 * scale, 12 * scale, 3 * scale);
+    if (c.kind === "soldier") {
+      // spear
+      ctx.strokeStyle = "#c0c6cc";
+      ctx.lineWidth = 1.5 * scale;
+      ctx.beginPath();
+      ctx.moveTo(6 * scale, -6 * scale);
+      ctx.lineTo(12 * scale, -16 * scale);
+      ctx.stroke();
+    }
   }
 
   // hp bar for damaged hostiles

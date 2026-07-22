@@ -27,7 +27,8 @@
     <div class="modal__panel">
       <h2 id="howto-title">Как играть</h2>
       <ul>
-        <li>Внизу — силы бога, как в WorldBox: <strong>Мир</strong>, <strong>Жизнь</strong>, <strong>Хаос</strong>, <strong>Поселение</strong></li>
+        <li>Внизу силы: <strong>Мир</strong>, <strong>Жизнь</strong>, <strong>Война</strong>, <strong>Хаос</strong>, <strong>Поселение</strong></li>
+        <li>Война: стены, башни, казармы и доктрины — оборона, охват, осада, рейд, прорыв, засада</li>
         <li>Зажми ЛКМ и веди кистью — рисуй воду, лаву, лес</li>
         <li>Молния, метеорит, торнадо, бомба — кликни по карте</li>
         <li>ПКМ / перетаскивание — камера, колёсико — зум, WASD — панорама</li>
@@ -78,13 +79,15 @@
     <section class="inspect" id="inspect">
       <h3 id="inspect-title">Мир</h3>
       <p id="inspect-body">Кликни по существу или клетке.</p>
+      <p class="war-status" id="war-status"></p>
       <div id="inspect-bars" class="inspect-bars hidden"></div>
     </section>
 
     <nav class="god-bar" id="god-bar" aria-label="Силы бога">
       <div class="god-tabs" id="god-tabs">
         <button type="button" class="god-tab" data-tab="world">Мир</button>
-        <button type="button" class="god-tab active" data-tab="life">Жизнь</button>
+        <button type="button" class="god-tab" data-tab="life">Жизнь</button>
+        <button type="button" class="god-tab active" data-tab="war">Война</button>
         <button type="button" class="god-tab" data-tab="chaos">Хаос</button>
         <button type="button" class="god-tab" data-tab="colony">Поселение</button>
       </div>

@@ -1,6 +1,13 @@
 import { MAP_H, MAP_W } from "./config.js";
 import { createSettler, bindSettler } from "./settlers.js";
 import { createCreature } from "./creatures.js";
+import {
+  declareWar,
+  makePeace,
+  setColonyStance,
+  spawnEnemyArmy,
+  trainSoldier,
+} from "./war.js";
 import { inBounds, walkable } from "./world.js";
 
 /** Brush / click powers inspired by WorldBox god tools */
@@ -12,6 +19,14 @@ export const POWER_TABS = {
   life: {
     label: "Жизнь",
     tools: ["spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit", "rain", "bless"],
+  },
+  war: {
+    label: "Война",
+    tools: [
+      "wall", "gate", "tower", "barracks", "train_soldier",
+      "stance_defend", "stance_raid", "stance_encircle", "stance_siege", "stance_breakthrough", "stance_ambush",
+      "declare_war", "spawn_army", "make_peace",
+    ],
   },
   chaos: {
     label: "Хаос",
@@ -32,6 +47,9 @@ export const BRUSH_TOOLS = new Set([
 export const CLICK_POWERS = new Set([
   "lightning", "meteor", "bomb", "tornado", "death",
   "spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit",
+  "spawn_army", "declare_war", "make_peace", "train_soldier",
+  "stance_defend", "stance_raid", "stance_encircle", "stance_siege",
+  "stance_breakthrough", "stance_ambush",
 ]);
 
 export function forBrush(cx, cy, radius, fn) {
@@ -87,6 +105,26 @@ export function applyPower(game, tool, tx, ty, { continuous = false } = {}) {
   }
   if (tool === "death") {
     deathFinger(game, tx, ty);
+    return;
+  }
+  if (tool === "declare_war") {
+    declareWar(game);
+    return;
+  }
+  if (tool === "make_peace") {
+    makePeace(game);
+    return;
+  }
+  if (tool === "spawn_army") {
+    spawnEnemyArmy(game, tx, ty, 5);
+    return;
+  }
+  if (tool === "train_soldier") {
+    trainSoldier(game);
+    return;
+  }
+  if (tool.startsWith("stance_")) {
+    setColonyStance(game, tool.slice("stance_".length));
   }
 }
 

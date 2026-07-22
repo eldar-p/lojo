@@ -32,7 +32,7 @@ export function senseWorld(game) {
       if (c.food && !c.looted) corpses.push(c);
       continue;
     }
-    if (c.hostile) threats.push(c);
+    if (c.hostile || c.faction === "horde" || c.kind === "soldier") threats.push(c);
     else if (c.kind === "rabbit") prey.push(c);
   }
 
@@ -225,13 +225,29 @@ export function decideGoal(s, game, sense) {
     });
   }
 
-  // Guard patrol near stockpile at night / when threats exist
-  if (role === "guard" || (sense.threats.length && traits.bravery > 0.55)) {
+  // Guard patrol / war doctrine
+  if (role === "guard" || s.military || (sense.threats.length && traits.bravery > 0.55)) {
     goals.push({
       type: "patrol",
-      score: 28 + sense.threats.length * 8 + (sense.isNight ? 15 : 0) + (role === "guard" ? 25 : 0),
+      score: 28 + sense.threats.length * 8 + (sense.isNight ? 15 : 0) + (role === "guard" || s.military ? 25 : 0),
       thought: "патрулирует",
     });
+  }
+
+  const stance = game.war?.colonyStance;
+  const atWar = game.war?.atWar || sense.threats.some((t) => t.kind === "soldier");
+  if (atWar && (s.military || role === "guard" || traits.bravery > 0.6)) {
+    if (stance === "defend") {
+      goals.push({ type: "hold_wall", score: 75 + sense.threats.length * 6, thought: "держит оборону" });
+    } else if (stance === "raid" || stance === "breakthrough") {
+      goals.push({ type: "fight", score: 85 + traits.bravery * 30, thought: "идёт в атаку", payload: { targetId: threat?.unit?.id } });
+    } else if (stance === "encircle") {
+      goals.push({ type: "flank_move", score: 80, thought: "заходит с фланга" });
+    } else if (stance === "ambush") {
+      goals.push({ type: "ambush_pos", score: 70, thought: "готовит засаду" });
+    } else if (stance === "siege") {
+      goals.push({ type: "fight", score: 78, thought: "давит на врага", payload: { targetId: threat?.unit?.id } });
+    }
   }
 
   // Social idle near friends

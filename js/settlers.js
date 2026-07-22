@@ -206,10 +206,86 @@ function executeGoal(s, game, sense, goal) {
     case "patrol":
       startPatrol(s, game);
       break;
+    case "hold_wall":
+      holdWall(s, game);
+      break;
+    case "flank_move":
+      flankMove(s, game, sense);
+      break;
+    case "ambush_pos":
+      ambushPos(s, game);
+      break;
     case "idle_near":
     default:
       softWander(s, game, sense);
       break;
+  }
+}
+
+function holdWall(s, game) {
+  // Stand near wall/gate/tower
+  let best = null;
+  let bestD = Infinity;
+  for (let y = 0; y < game.world.terrain.length; y++) {
+    for (let x = 0; x < game.world.terrain[0].length; x++) {
+      const b = game.world.buildings[y][x];
+      if (!b?.done) continue;
+      if (b.type !== "wall" && b.type !== "gate" && b.type !== "tower") continue;
+      const spot = adjacentSpot(game.world, x, y, s.x, s.y);
+      if (!spot) continue;
+      const d = Math.hypot(spot.x - s.x, spot.y - s.y);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+  }
+  if (best) {
+    s.job = { type: "wander", x: best.x, y: best.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, best.x, best.y);
+    s.thought = "держит оборону";
+  } else {
+    startPatrol(s, game);
+  }
+}
+
+function flankMove(s, game, sense) {
+  const threat = nearestThreat(sense, s.x, s.y, 14);
+  if (!threat) {
+    startPatrol(s, game);
+    return;
+  }
+  const ang = Math.atan2(threat.unit.y - s.y, threat.unit.x - s.x) + (s.id % 2 === 0 ? 1.2 : -1.2);
+  const tx = Math.round(threat.unit.x + Math.cos(ang) * 3);
+  const ty = Math.round(threat.unit.y + Math.sin(ang) * 3);
+  if (walkable(game.world, tx, ty)) {
+    s.job = { type: "wander", x: tx, y: ty, claimedBy: s.id, auto: true };
+    goToTile(s, game, tx, ty);
+    s.thought = "заходит с фланга";
+  } else {
+    startFight(s, game, threat.unit.id);
+  }
+}
+
+function ambushPos(s, game) {
+  let best = null;
+  let bestD = 10;
+  for (let y = 0; y < game.world.terrain.length; y++) {
+    for (let x = 0; x < game.world.terrain[0].length; x++) {
+      if (game.world.resources[y][x].kind !== "tree") continue;
+      const spot = adjacentSpot(game.world, x, y, s.x, s.y);
+      if (!spot) continue;
+      const d = Math.hypot(spot.x - s.x, spot.y - s.y);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+  }
+  if (best) {
+    s.job = { type: "wander", x: best.x, y: best.y, claimedBy: s.id, auto: true };
+    goToTile(s, game, best.x, best.y);
+    s.thought = "в засаде";
   }
 }
 
@@ -502,7 +578,15 @@ function assignJob(s, job, game) {
 }
 
 function labelBuilding(type) {
-  return type === "hut" ? "домик" : type === "farm" ? "грядку" : "склад";
+  return {
+    hut: "домик",
+    farm: "грядку",
+    stockpile: "склад",
+    wall: "стену",
+    gate: "ворота",
+    tower: "башню",
+    barracks: "казарму",
+  }[type] || "здание";
 }
 
 function goToTile(s, game, tx, ty) {

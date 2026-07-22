@@ -151,7 +151,12 @@ export function walkable(world, x, y) {
   const t = world.terrain[y][x];
   if (t === "water" || t === "lava" || t === "mountain") return false;
   const b = world.buildings[y][x];
-  if (b && b.done && (b.type === "hut" || b.type === "stockpile")) return false;
+  if (b && b.done) {
+    if (b.type === "gate") return true;
+    if (b.type === "wall" || b.type === "hut" || b.type === "stockpile" || b.type === "tower" || b.type === "barracks") {
+      return false;
+    }
+  }
   return true;
 }
 

@@ -9,6 +9,7 @@ const DEFS = {
   rabbit: { hp: 20, speed: 2.8, color: "#d9c2a0", hostile: false, food: 4, radius: 0.35 },
   wolf: { hp: 55, speed: 2.4, color: "#6b7280", hostile: true, food: 0, radius: 0.45, damage: 18 },
   bandit: { hp: 70, speed: 1.9, color: "#8b3a3a", hostile: true, food: 0, radius: 0.5, damage: 22 },
+  soldier: { hp: 90, speed: 2.05, color: "#6b2d3c", hostile: true, food: 0, radius: 0.5, damage: 20 },
 };
 
 export function createCreature(kind, x, y, id) {
@@ -36,6 +37,12 @@ export function createCreature(kind, x, y, id) {
     memory: { lastPreyX: null, lastPreyY: null, packId: (id % 3) },
     morale: 1,
     thinkCd: Math.random() * 0.5,
+    faction: kind === "soldier" ? "horde" : "wild",
+    order: null,
+    avoidTowers: false,
+    ambushReady: false,
+    flankPhase: null,
+    strategyRole: "line",
   };
 }
 
@@ -73,9 +80,13 @@ export function updateCreatures(game, dt) {
       }
     }
 
+    // Enemy soldiers are steered by war.js
+    if (c.kind === "soldier" && c.faction === "horde") continue;
+
     if (c.kind === "rabbit") updateRabbit(c, game, dt);
     else if (c.kind === "wolf") updateWolf(c, game, dt, packs.get(c.memory.packId) || [c]);
     else if (c.kind === "bandit") updateBandit(c, game, dt);
+    else if (c.kind === "soldier") updateBandit(c, game, dt);
   }
 
   for (const c of game.creatures) {

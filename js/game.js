@@ -20,12 +20,15 @@ import {
   createSettler,
   updateSettler,
 } from "./settlers.js";
+import { buildingMaxHp, createWarState, MILITARY_BUILDINGS, updateWar } from "./war.js";
 import {
   countBuildings,
   createWorld,
   findBuildSite,
   inBounds,
 } from "./world.js";
+
+const BUILD_TOOLS = new Set(["hut", "farm", "stockpile", ...MILITARY_BUILDINGS]);
 
 export function createGame(canvas) {
   const world = createWorld();
@@ -43,8 +46,9 @@ export function createGame(canvas) {
     tornadoes: [],
     stock: { food: 18, wood: 20, stone: 4 },
     tool: "select",
-    powerTab: "life",
+    powerTab: "war",
     brushSize: 1,
+    war: createWarState(),
     speed: 1,
     time: DAY_LENGTH * 0.3,
     day: 1,
@@ -130,7 +134,7 @@ export function createGame(canvas) {
   function onPointerMove(sx, sy) {
     const tile = screenToTile(sx, sy);
     game.hoverTile = tile;
-    if (game.tool === "hut" || game.tool === "farm" || game.tool === "stockpile") {
+    if (BUILD_TOOLS.has(game.tool)) {
       game.hoverValid = canAfford(game, game.tool) && findBuildSite(world, tile.x, tile.y);
     } else {
       game.hoverValid = inBounds(tile.x, tile.y);
@@ -161,7 +165,7 @@ export function createGame(canvas) {
       return;
     }
 
-    if (game.tool === "hut" || game.tool === "farm" || game.tool === "stockpile") {
+    if (BUILD_TOOLS.has(game.tool)) {
       tryBuild(game, tile.x, tile.y, game.tool);
       return;
     }
@@ -257,6 +261,7 @@ function update(game, dt) {
   }
 
   updateCreatures(game, dt);
+  updateWar(game, dt);
   updateWorldForces(game, dt);
 }
 
@@ -279,7 +284,11 @@ function tryBuild(game, x, y, type) {
   for (const [k, v] of Object.entries(cost)) game.stock[k] -= v;
   placeBuilding(game, x, y, type, false);
   game.jobs.push({ type: "build", building: type, x, y, claimedBy: null });
-  game.toast(`Заказан ${type === "hut" ? "домик" : type === "farm" ? "огород" : "склад"}`);
+  const names = {
+    hut: "домик", farm: "огород", stockpile: "склад",
+    wall: "стена", gate: "ворота", tower: "башня", barracks: "казарма",
+  };
+  game.toast(`Стройка: ${names[type] || type}`);
 }
 
 function placeBuilding(game, x, y, type, done) {
@@ -291,6 +300,8 @@ function placeBuilding(game, x, y, type, done) {
     progress: done ? 1 : 0,
     done: !!done,
     growth: type === "farm" ? (done ? 0.4 : 0) : undefined,
+    hp: buildingMaxHp(type),
+    cool: 0,
   };
   game.world.buildings[y][x] = b;
   return b;

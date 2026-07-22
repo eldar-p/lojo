@@ -1,6 +1,7 @@
 import { TOOL_HINTS } from "./config.js";
 import { canRecruit, createGame, getTimeLabel } from "./game.js";
 import { POWER_TABS } from "./powers.js";
+import { STRATEGIES } from "./war.js";
 
 const boot = document.getElementById("boot");
 const shell = document.getElementById("game-shell");
@@ -20,6 +21,20 @@ const TOOL_LABELS = {
   hut: "Домик",
   farm: "Грядка",
   stockpile: "Склад",
+  wall: "Стена",
+  gate: "Ворота",
+  tower: "Башня",
+  barracks: "Казарма",
+  train_soldier: "Солдат",
+  stance_defend: "Оборона",
+  stance_raid: "Рейд",
+  stance_encircle: "Охват",
+  stance_siege: "Осада",
+  stance_breakthrough: "Прорыв",
+  stance_ambush: "Засада",
+  declare_war: "Война",
+  make_peace: "Мир",
+  spawn_army: "Волна",
   chop: "Рубка",
   gather: "Ягоды",
   mine: "Камень",
@@ -59,6 +74,7 @@ const el = {
   title: document.getElementById("inspect-title"),
   body: document.getElementById("inspect-body"),
   bars: document.getElementById("inspect-bars"),
+  war: document.getElementById("war-status"),
 };
 
 let api = null;
@@ -256,6 +272,15 @@ function syncHud() {
   el.day.textContent = `День ${game.day}`;
   el.time.textContent = getTimeLabel(game.dayPhase);
   el.fill.style.width = `${(game.dayPhase * 100).toFixed(1)}%`;
+  if (el.war && game.war) {
+    const enemyN = game.creatures.filter((c) => !c.dead && c.kind === "soldier").length;
+    const ours = game.settlers.filter((s) => s.state !== "die" && s.military).length;
+    const st = STRATEGIES[game.war.colonyStance]?.name || "—";
+    const est = STRATEGIES[game.war.enemyStance]?.name || "—";
+    el.war.textContent = game.war.atWar || enemyN
+      ? `Война · наша доктрина: ${st} · враг: ${est} · солдаты ${ours} / орда ${enemyN}`
+      : `Мир · доктрина: ${st}. Вкладка «Война» — стены, башни, стратегии.`;
+  }
 }
 
 function updateInspect() {
@@ -280,9 +305,11 @@ function updateInspect() {
 
   if (game.selectedCreature && !game.selectedCreature.dead) {
     const c = game.selectedCreature;
-    const names = { rabbit: "Кролик", wolf: "Волк", bandit: "Бандит" };
+    const names = { rabbit: "Кролик", wolf: "Волк", bandit: "Бандит", soldier: "Воин Орды" };
     el.title.textContent = names[c.kind] || c.kind;
-    el.body.textContent = c.hostile ? "Опасен для поселенцев" : "Можно добыть на еду";
+    el.body.textContent = c.kind === "soldier"
+      ? `Стратегия: ${STRATEGIES[api.game.war?.enemyStance]?.name || "бой"} · приказ: ${c.order?.type || "—"}`
+      : c.hostile ? "Опасен для поселенцев" : "Можно добыть на еду";
     el.bars.classList.remove("hidden");
     el.bars.innerHTML = `
       <div class="bar-row"><span>HP</span><div class="bar bar--energy"><i style="width:${((c.hp / c.maxHp) * 100).toFixed(0)}%"></i></div></div>
@@ -309,7 +336,10 @@ function updateInspect() {
       el.bars.classList.add("hidden");
       return;
     }
-    const names = { hut: "Домик", farm: "Грядка", stockpile: "Склад" };
+    const names = {
+      hut: "Домик", farm: "Грядка", stockpile: "Склад",
+      wall: "Стена", gate: "Ворота", tower: "Башня", barracks: "Казарма",
+    };
     el.title.textContent = names[b.type] || "Здание";
     if (!b.done) {
       el.body.textContent = "Строится…";
@@ -323,6 +353,19 @@ function updateInspect() {
       el.bars.innerHTML = `
         <div class="bar-row"><span>Рост</span><div class="bar bar--progress"><i style="width:${((b.growth ?? 0) * 100).toFixed(0)}%"></i></div></div>
       `;
+    } else if (b.type === "tower") {
+      el.body.textContent = "Стреляет по воинам Орды в радиусе.";
+      el.bars.classList.add("hidden");
+    } else if (b.type === "wall" || b.type === "gate") {
+      el.body.textContent = b.type === "gate" ? "Проход в стене. Можно штурмовать." : "Блокирует путь. Ломается в осаде.";
+      el.bars.classList.remove("hidden");
+      const max = b.type === "wall" ? 80 : 100;
+      el.bars.innerHTML = `
+        <div class="bar-row"><span>Прочность</span><div class="bar bar--hunger"><i style="width:${((b.hp / max) * 100).toFixed(0)}%"></i></div></div>
+      `;
+    } else if (b.type === "barracks") {
+      el.body.textContent = "Обучает солдат (кнопка «Солдат» во вкладке Война).";
+      el.bars.classList.add("hidden");
     } else {
       el.body.textContent = b.type === "hut" ? "Укрытие на ночь" : "Общий склад";
       el.bars.classList.add("hidden");
