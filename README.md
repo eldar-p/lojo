@@ -6,6 +6,17 @@
 
 **https://eldar-p.github.io/lojo/**
 
+### Один раз включить GitHub Pages
+
+У агента нет прав admin на репозиторий, поэтому Pages нужно включить владельцу:
+
+1. Открой [Settings → Pages](https://github.com/eldar-p/lojo/settings/pages)
+2. **Build and deployment → Source** → выбери **GitHub Actions**
+3. Дождись зелёного workflow [Deploy to GitHub Pages](https://github.com/eldar-p/lojo/actions/workflows/deploy-pages.yml)  
+   (если не стартовал сам: Actions → Deploy to GitHub Pages → Run workflow)
+
+После этого игра будет открываться по ссылке выше.
+
 ## Локальный запуск
 
 Нужен простой локальный сервер (ES-модули не открываются через `file://`):
