@@ -412,6 +412,8 @@ function doWork(s, dt, game) {
 }
 
 function nameEnding(name) {
+  // Names that look feminine by ending but are used as masculine here
+  if (/^(Лёня|Коля|Ваня|Саша|Женя|Гоша|Рома|Глеб)$/i.test(name)) return "";
   return /[ая]$/i.test(name) ? "а" : "";
 }
 
