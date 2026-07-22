@@ -161,6 +161,25 @@ export function createRenderer(canvas) {
 
     drawFx(ctx, game, worldToScreen, cam.zoom, t);
 
+    // Weather rain overlay
+    if (game.weather && (game.weather.kind === "rain" || game.weather.kind === "storm")) {
+      const inten = game.weather.intensity || 0.5;
+      ctx.fillStyle = `rgba(40, 70, 95, ${0.08 + inten * 0.12})`;
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = `rgba(180, 210, 230, ${0.25 + inten * 0.35})`;
+      ctx.lineWidth = 1;
+      const drops = game.weather.kind === "storm" ? 55 : 32;
+      for (let i = 0; i < drops; i++) {
+        const seed = (i * 97 + (t * (40 + inten * 40)) | 0);
+        const dx = (seed * 13) % w;
+        const dy = (seed * 29 + i * 17) % h;
+        ctx.beginPath();
+        ctx.moveTo(dx, dy);
+        ctx.lineTo(dx + (game.weather.kind === "storm" ? 4 : 1), dy + 8 + inten * 6);
+        ctx.stroke();
+      }
+    }
+
     const night =
       day < 0.18 ? 1 - day / 0.18 :
       day > 0.88 ? (day - 0.88) / 0.12 :
@@ -352,7 +371,12 @@ function drawSettler(ctx, s, p, zoom, selected) {
   ctx.ellipse(0, 9 * scale, 7 * scale, 2.5 * scale, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const body = `hsl(${s.hue} 42% 42%)`;
+  const cloth = s.life?.clothing || "plain";
+  const body = cloth === "fur" ? "#6a4a32"
+    : cloth === "cloak" ? "#3d4f5c"
+    : cloth === "light" ? `hsl(${s.hue} 38% 55%)`
+    : cloth === "vest" ? "#4a5a3a"
+    : `hsl(${s.hue} 42% 42%)`;
   const stride = Math.sin(s.bob * 1.4) * (s.state === "walk" ? 3 : 0.5) * scale;
   ctx.strokeStyle = "#2a3038";
   ctx.lineWidth = 2.2 * scale;
@@ -368,18 +392,45 @@ function drawSettler(ctx, s, p, zoom, selected) {
   roundRect(ctx, -5 * scale, -8 * scale, 10 * scale, 12 * scale, 3 * scale);
   ctx.fill();
 
+  // Cloak / fur silhouette
+  if (cloth === "cloak" || cloth === "fur") {
+    ctx.fillStyle = cloth === "fur" ? "rgba(90,60,40,0.55)" : "rgba(30,45,55,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(-6 * scale, -6 * scale);
+    ctx.lineTo(-8 * scale, 6 * scale);
+    ctx.lineTo(8 * scale, 6 * scale);
+    ctx.lineTo(6 * scale, -6 * scale);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   ctx.fillStyle = "#e7c29a";
   ctx.beginPath();
   ctx.arc(0, -12 * scale, 4.5 * scale, 0, Math.PI * 2);
   ctx.fill();
+
+  // Mood tint on cheeks
+  const mood = s.life?.mood ?? 0.5;
+  if (mood > 0.65) {
+    ctx.fillStyle = "rgba(230,120,120,0.35)";
+    ctx.beginPath();
+    ctx.arc(-2.2 * scale, -11 * scale, 1.2 * scale, 0, Math.PI * 2);
+    ctx.arc(2.2 * scale, -11 * scale, 1.2 * scale, 0, Math.PI * 2);
+    ctx.fill();
+  } else if ((s.life?.fear || 0) > 0.45) {
+    ctx.fillStyle = "rgba(120,160,200,0.35)";
+    ctx.beginPath();
+    ctx.arc(0, -12 * scale, 4.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   ctx.fillStyle = `hsl(${(s.hue + 40) % 360} 35% 28%)`;
   ctx.beginPath();
   ctx.arc(0, -14 * scale, 4.2 * scale, Math.PI, 0);
   ctx.fill();
 
-  if (s.state === "work") {
-    ctx.fillStyle = "#e0a045";
+  if (s.state === "work" || s.state === "chat") {
+    ctx.fillStyle = s.state === "chat" ? "#9fd49a" : "#e0a045";
     ctx.fillRect(-1 * scale, -22 * scale, 2 * scale, 5 * scale);
   }
   if (s.state === "sleep") {

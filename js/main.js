@@ -1,5 +1,6 @@
 import { TOOL_HINTS } from "./config.js";
 import { createGame, getTimeLabel } from "./game.js";
+import { clothingLabel, moodLabel, schedulePhase, weatherStatus } from "./life.js";
 import { POWER_TABS, WAR_GROUPS } from "./powers.js";
 import { STRATEGIES } from "./war.js";
 import { countBuildings } from "./world.js";
@@ -306,26 +307,31 @@ function syncHud() {
 function colonyStatus(game) {
   const alive = game.settlers.filter((s) => s.state !== "die");
   const builds = game.jobs.filter((j) => j.type === "build").length;
-  const gather = game.jobs.filter((j) => j.type === "chop" || j.type === "gather" || j.type === "mine" || j.type === "harvest").length;
+  const chatting = alive.filter((s) => s.state === "chat").length;
+  const sleeping = alive.filter((s) => s.state === "sleep").length;
   const soldiers = alive.filter((s) => s.military).length;
   const enemyN = game.creatures.filter((c) => !c.dead && c.kind === "soldier").length;
   const homes = countBuildings(game.world, "hut", true);
-  const farms = countBuildings(game.world, "farm", true);
+  const phase = schedulePhase(game.dayPhase);
+  const weather = weatherStatus(game);
   const st = STRATEGIES[game.war?.colonyStance]?.name;
 
   if (game.war?.atWar || enemyN) {
-    return `Война · доктрина «${st || "—"}» · солдаты ${soldiers} · орда ${enemyN} · стройки ${builds}`;
+    return `${weather} · война · «${st || "—"}» · солдаты ${soldiers} / орда ${enemyN}`;
+  }
+  if (game.weather?.kind === "rain" || game.weather?.kind === "storm") {
+    return `${weather} · ${phase.label} · прячутся и живут · домов ${homes}`;
+  }
+  if (sleeping >= Math.max(1, (alive.length / 2) | 0)) {
+    return `${weather} · ${phase.label} · спят ${sleeping}`;
+  }
+  if (chatting > 0) {
+    return `${weather} · ${phase.label} · общаются ${chatting} · строят ${builds}`;
   }
   if (builds > 0) {
-    return `Строят сами · очередей ${builds} · домов ${homes} · ферм ${farms}`;
+    return `${weather} · ${phase.label} · работают · очередей ${builds}`;
   }
-  if (gather > 0) {
-    return `Добывают сами · заданий ${gather} · людей ${alive.length}`;
-  }
-  if (game.stock.food < 10) {
-    return `Ищут еду · запас ${Math.floor(game.stock.food)}`;
-  }
-  return `Колония живёт сама · ${alive.length} чел. · домов ${homes}`;
+  return `${weather} · ${phase.label} · ${alive.length} чел. живут сами`;
 }
 
 function hasSelection(game) {
@@ -346,16 +352,22 @@ function updateInspect() {
     const s = game.selected;
     const role = s.brain?.roleName || "Житель";
     const goal = s.brain?.goal?.type || s.state;
+    const phase = schedulePhase(api.game.dayPhase);
+    const mood = moodLabel(s.life?.mood ?? 0.5);
+    const cloth = clothingLabel(s.life?.clothing || "plain");
     el.title.textContent = `${s.name} · ${role}`;
-    el.body.textContent = `Сейчас: ${s.thought} (${goal})`;
+    el.body.textContent = `${s.thought} · ${phase.label} · ${mood} · ${cloth}`;
     el.bars.classList.remove("hidden");
-    const brav = ((s.brain?.traits?.bravery || 0) * 100).toFixed(0);
-    const dil = ((s.brain?.traits?.diligence || 0) * 100).toFixed(0);
+    const moodPct = ((s.life?.mood ?? 0.5) * 100).toFixed(0);
+    const fearPct = ((s.life?.fear ?? 0) * 100).toFixed(0);
+    const socialPct = ((s.life?.socialNeed ?? 0) * 100).toFixed(0);
     el.bars.innerHTML = `
       <div class="bar-row"><span>Голод</span><div class="bar bar--hunger"><i style="width:${s.hunger.toFixed(0)}%"></i></div></div>
       <div class="bar-row"><span>Силы</span><div class="bar bar--energy"><i style="width:${s.energy.toFixed(0)}%"></i></div></div>
-      <div class="bar-row"><span>Храбрость</span><div class="bar bar--progress"><i style="width:${brav}%"></i></div></div>
-      <div class="bar-row"><span>Труд</span><div class="bar bar--progress"><i style="width:${dil}%"></i></div></div>
+      <div class="bar-row"><span>Настрой</span><div class="bar bar--progress"><i style="width:${moodPct}%"></i></div></div>
+      <div class="bar-row"><span>Страх</span><div class="bar bar--hunger"><i style="width:${fearPct}%"></i></div></div>
+      <div class="bar-row"><span>Общение</span><div class="bar bar--energy"><i style="width:${socialPct}%"></i></div></div>
+      <div class="bar-row"><span>Цель</span><div class="bar bar--progress"><i style="width:${Math.min(100, (s.brain?.commit || 0) * 40).toFixed(0)}%"></i></div></div>
     `;
     return;
   }

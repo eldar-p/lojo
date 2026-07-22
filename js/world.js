@@ -152,7 +152,8 @@ export function walkable(world, x, y) {
   if (t === "water" || t === "lava" || t === "mountain") return false;
   const b = world.buildings[y][x];
   if (b && b.done) {
-    if (b.type === "gate") return true;
+    // Closed gates block like walls (NPCs shut them at night / storms)
+    if (b.type === "gate") return !b.shut;
     if (b.type === "wall" || b.type === "hut" || b.type === "stockpile" || b.type === "tower" || b.type === "barracks") {
       return false;
     }

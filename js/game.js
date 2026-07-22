@@ -8,6 +8,7 @@ import {
 } from "./config.js";
 import { seedWildlife, updateCreatures } from "./creatures.js";
 import { updateColonyPlan } from "./colony.js";
+import { createWeather, updateWeather } from "./life.js";
 import {
   applyPower,
   BRUSH_TOOLS,
@@ -51,6 +52,7 @@ export function createGame(canvas) {
     warSub: "build",
     brushSize: 1,
     war: createWarState(),
+    weather: createWeather(),
     speed: 1,
     time: DAY_LENGTH * 0.3,
     day: 1,
@@ -235,12 +237,15 @@ function update(game, dt) {
   game.dayPhase = game.time / DAY_LENGTH;
   game.isNight = game.dayPhase < 0.18 || game.dayPhase > 0.82;
 
+  updateWeather(game, dt);
+
+  const rainBoost = game.weather?.kind === "rain" || game.weather?.kind === "storm" ? 1.45 : 1;
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const b = game.world.buildings[y][x];
       if (b?.type === "farm" && b.done) {
         if ((b.growth ?? 0) < 1) {
-          b.growth = Math.min(1, (b.growth ?? 0) + dt / 28);
+          b.growth = Math.min(1, (b.growth ?? 0) + (dt / 28) * rainBoost);
         } else {
           const exists = game.jobs.some((j) => j.type === "harvest" && j.x === x && j.y === y);
           if (!exists) game.jobs.push({ type: "harvest", x, y, claimedBy: null });

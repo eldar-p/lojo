@@ -1,4 +1,5 @@
 import { MAP_H, MAP_W } from "./config.js";
+import { reactToPlayer, setRaining } from "./life.js";
 import { createSettler, bindSettler } from "./settlers.js";
 import { createCreature } from "./creatures.js";
 import {
@@ -128,6 +129,7 @@ export function applyPower(game, tool, tx, ty, { continuous = false } = {}) {
   }
   if (tool === "spawn_army") {
     spawnEnemyArmy(game, tx, ty, 5);
+    reactToPlayer(game, "spawn_threat", tx + 0.5, ty + 0.5, 12);
     return;
   }
   if (tool === "train_soldier") {
@@ -191,6 +193,7 @@ function paintTile(game, tool, x, y) {
     }
     damageLifeAt(game, x, y, 35);
     addFx(game, "spark", x + 0.5, y + 0.5, 0.4);
+    reactToPlayer(game, "fire", x + 0.5, y + 0.5, 4);
     return;
   }
 
@@ -208,6 +211,8 @@ function paintTile(game, tool, x, y) {
       cell.amount = 2;
     }
     addFx(game, "raindrop", x + Math.random(), y + Math.random(), 0.35);
+    setRaining(game, 0.65, 20, false);
+    reactToPlayer(game, "rain", x + 0.5, y + 0.5, 5);
     return;
   }
 
@@ -221,6 +226,7 @@ function paintTile(game, tool, x, y) {
     }
     game.stock.food += 1;
     addFx(game, "bless", x + 0.5, y + 0.5, 0.7);
+    reactToPlayer(game, "bless", x + 0.5, y + 0.5, 3);
   }
 }
 
@@ -237,6 +243,7 @@ function spawnHuman(game, tx, ty) {
   game.settlers.push(s);
   addFx(game, "spawn", tx + 0.5, ty + 0.5, 0.6);
   game.toast(`${s.name} явился по воле богов`);
+  reactToPlayer(game, "spawn_friend", tx + 0.5, ty + 0.5, 6);
 }
 
 function spawnCreature(game, kind, tx, ty) {
@@ -250,6 +257,9 @@ function spawnCreature(game, kind, tx, ty) {
   addFx(game, "spawn", tx + 0.5, ty + 0.5, 0.5);
   const names = { rabbit: "Кролик", wolf: "Волк", bandit: "Бандит" };
   game.toast(`${names[kind] || kind} появился`);
+  if (kind === "wolf" || kind === "bandit") {
+    reactToPlayer(game, "spawn_threat", tx + 0.5, ty + 0.5, 8);
+  }
 }
 
 function lightning(game, tx, ty) {
@@ -263,6 +273,7 @@ function lightning(game, tx, ty) {
     }
     damageLifeAt(game, x, y, 55);
   });
+  reactToPlayer(game, "lightning", tx + 0.5, ty + 0.5, 5);
   game.toast("Молния!");
 }
 
@@ -283,6 +294,7 @@ function meteor(game, tx, ty) {
     }
     damageLifeAt(game, x, y, 80);
   });
+  reactToPlayer(game, "meteor", tx + 0.5, ty + 0.5, 6);
   game.toast("Метеорит!");
 }
 
@@ -298,6 +310,7 @@ function bomb(game, tx, ty) {
     }
     damageLifeAt(game, x, y, 70);
   });
+  reactToPlayer(game, "bomb", tx + 0.5, ty + 0.5, 6);
   game.toast("Взрыв!");
 }
 
@@ -309,6 +322,7 @@ function tornado(game, tx, ty) {
     angle: Math.random() * Math.PI * 2,
   });
   addFx(game, "tornado", tx + 0.5, ty + 0.5, 0.8);
+  reactToPlayer(game, "tornado", tx + 0.5, ty + 0.5, 7);
   game.toast("Торнадо!");
 }
 
@@ -331,6 +345,7 @@ function deathFinger(game, tx, ty) {
     }
   }
   addFx(game, "death", tx + 0.5, ty + 0.5, 0.5);
+  reactToPlayer(game, "death", tx + 0.5, ty + 0.5, 8);
   game.toast(killed ? `Стерто: ${killed}` : "Пусто");
 }
 
@@ -340,11 +355,16 @@ export function damageLifeAt(game, x, y, dmg) {
     if (Math.hypot(s.x - (x + 0.5), s.y - (y + 0.5)) < 0.95) {
       s.energy = Math.max(0, s.energy - dmg * 0.4);
       s.hunger = Math.max(0, s.hunger - dmg * 0.25);
+      if (s.life) {
+        s.life.fear = Math.min(1, s.life.fear + Math.min(0.5, dmg * 0.01));
+        s.life.mood = Math.max(0, s.life.mood - Math.min(0.35, dmg * 0.008));
+      }
       if (dmg > 50 || s.energy < 5) {
         s.state = "die";
         s.thought = "погиб";
       } else {
         s.thought = "раненый";
+        s.brain.commit = 0;
       }
     }
   }
