@@ -1,7 +1,8 @@
 import { TOOL_HINTS } from "./config.js";
-import { canRecruit, createGame, getTimeLabel } from "./game.js";
-import { POWER_TABS } from "./powers.js";
+import { createGame, getTimeLabel } from "./game.js";
+import { POWER_TABS, WAR_GROUPS } from "./powers.js";
 import { STRATEGIES } from "./war.js";
+import { countBuildings } from "./world.js";
 
 const boot = document.getElementById("boot");
 const shell = document.getElementById("game-shell");
@@ -11,10 +12,13 @@ const canvas = document.getElementById("world");
 const btnStart = document.getElementById("btn-start");
 const btnHowto = document.getElementById("btn-howto");
 const btnHowtoClose = document.getElementById("btn-howto-close");
-const btnRecruit = document.getElementById("btn-recruit");
 const toolHint = document.getElementById("tool-hint");
 const toasts = document.getElementById("toasts");
 const godTools = document.getElementById("god-tools");
+const warSubs = document.getElementById("war-subs");
+const statusLine = document.getElementById("status-line");
+const inspectEl = document.getElementById("inspect");
+const inspectClose = document.getElementById("inspect-close");
 
 const TOOL_LABELS = {
   select: "Выбор",
@@ -84,7 +88,6 @@ const el = {
   title: document.getElementById("inspect-title"),
   body: document.getElementById("inspect-body"),
   bars: document.getElementById("inspect-bars"),
-  war: document.getElementById("war-status"),
 };
 
 let api = null;
@@ -96,6 +99,14 @@ btnHowto.addEventListener("click", () => howto.classList.remove("hidden"));
 btnHowtoClose.addEventListener("click", () => howto.classList.add("hidden"));
 howto.addEventListener("click", (e) => {
   if (e.target === howto) howto.classList.add("hidden");
+});
+
+inspectClose.addEventListener("click", () => {
+  if (!api) return;
+  api.game.selected = null;
+  api.game.selectedBuilding = null;
+  api.game.selectedCreature = null;
+  updateInspect();
 });
 
 btnStart.addEventListener("click", () => {
@@ -120,7 +131,17 @@ function wireGame() {
       document.querySelectorAll(".god-tab").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       game.powerTab = btn.dataset.tab;
+      warSubs.classList.toggle("hidden", game.powerTab !== "war");
       renderGodTools(game.powerTab);
+    });
+  });
+
+  document.querySelectorAll(".war-sub").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".war-sub").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      game.warSub = btn.dataset.war;
+      renderGodTools("war");
     });
   });
 
@@ -140,11 +161,6 @@ function wireGame() {
     });
   });
 
-  btnRecruit.addEventListener("click", () => {
-    api.recruit();
-    refreshRecruit();
-  });
-
   window.addEventListener("keydown", (e) => {
     game.keys.add(e.code);
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) {
@@ -162,9 +178,7 @@ function wireGame() {
     if (e.code === "Digit1") setBrush(0);
     if (e.code === "Digit2") setBrush(1);
     if (e.code === "Digit3") setBrush(2);
-    if (e.code === "Escape") {
-      setTool("select");
-    }
+    if (e.code === "Escape") setTool("select");
   });
 
   window.addEventListener("keyup", (e) => game.keys.delete(e.code));
@@ -182,7 +196,6 @@ function wireGame() {
       const rect = canvas.getBoundingClientRect();
       api.onPointerDown(e.clientX - rect.left, e.clientY - rect.top);
       updateInspect();
-      refreshRecruit();
     }
   });
 
@@ -223,9 +236,16 @@ function wireGame() {
   }, { passive: false });
 }
 
+function toolsForTab(tab) {
+  if (tab !== "war") return POWER_TABS[tab]?.tools || [];
+  const group = api?.game?.warSub || "build";
+  return WAR_GROUPS[group] || WAR_GROUPS.build;
+}
+
 function renderGodTools(tab) {
   const { game } = api;
-  const tools = POWER_TABS[tab]?.tools || [];
+  const tools = toolsForTab(tab);
+  warSubs.classList.toggle("hidden", tab !== "war");
   godTools.innerHTML = "";
   for (const tool of tools) {
     const btn = document.createElement("button");
@@ -237,7 +257,6 @@ function renderGodTools(tab) {
     btn.addEventListener("click", () => setTool(tool));
     godTools.appendChild(btn);
   }
-  // default select first if current tool not in tab
   if (!tools.includes(game.tool)) {
     setTool(tools[0] || "select");
   } else {
@@ -264,11 +283,10 @@ function setBrush(size) {
 
 function uiLoop(now) {
   if (!api) return;
-  if (now - uiTimer > 100) {
+  if (now - uiTimer > 120) {
     uiTimer = now;
     syncHud();
     updateInspect();
-    refreshRecruit();
   }
   requestAnimationFrame(uiLoop);
 }
@@ -282,19 +300,48 @@ function syncHud() {
   el.day.textContent = `День ${game.day}`;
   el.time.textContent = getTimeLabel(game.dayPhase);
   el.fill.style.width = `${(game.dayPhase * 100).toFixed(1)}%`;
-  if (el.war && game.war) {
-    const enemyN = game.creatures.filter((c) => !c.dead && c.kind === "soldier").length;
-    const ours = game.settlers.filter((s) => s.state !== "die" && s.military).length;
-    const st = STRATEGIES[game.war.colonyStance]?.name || "—";
-    const est = STRATEGIES[game.war.enemyStance]?.name || "—";
-    el.war.textContent = game.war.atWar || enemyN
-      ? `Война · наша доктрина: ${st} · враг: ${est} · солдаты ${ours} / орда ${enemyN}`
-      : `Мир · доктрина: ${st}. Вкладка «Война» — стены, башни, стратегии.`;
+  statusLine.textContent = colonyStatus(game);
+}
+
+function colonyStatus(game) {
+  const alive = game.settlers.filter((s) => s.state !== "die");
+  const builds = game.jobs.filter((j) => j.type === "build").length;
+  const gather = game.jobs.filter((j) => j.type === "chop" || j.type === "gather" || j.type === "mine" || j.type === "harvest").length;
+  const soldiers = alive.filter((s) => s.military).length;
+  const enemyN = game.creatures.filter((c) => !c.dead && c.kind === "soldier").length;
+  const homes = countBuildings(game.world, "hut", true);
+  const farms = countBuildings(game.world, "farm", true);
+  const st = STRATEGIES[game.war?.colonyStance]?.name;
+
+  if (game.war?.atWar || enemyN) {
+    return `Война · доктрина «${st || "—"}» · солдаты ${soldiers} · орда ${enemyN} · стройки ${builds}`;
   }
+  if (builds > 0) {
+    return `Строят сами · очередей ${builds} · домов ${homes} · ферм ${farms}`;
+  }
+  if (gather > 0) {
+    return `Добывают сами · заданий ${gather} · людей ${alive.length}`;
+  }
+  if (game.stock.food < 10) {
+    return `Ищут еду · запас ${Math.floor(game.stock.food)}`;
+  }
+  return `Колония живёт сама · ${alive.length} чел. · домов ${homes}`;
+}
+
+function hasSelection(game) {
+  return !!(game.selected && game.selected.state !== "die")
+    || !!(game.selectedCreature && !game.selectedCreature.dead)
+    || !!game.selectedBuilding;
 }
 
 function updateInspect() {
   const { game } = api;
+  if (!hasSelection(game)) {
+    inspectEl.classList.add("hidden");
+    return;
+  }
+  inspectEl.classList.remove("hidden");
+
   if (game.selected && game.selected.state !== "die") {
     const s = game.selected;
     const role = s.brain?.roleName || "Житель";
@@ -342,7 +389,7 @@ function updateInspect() {
         snow: "Снег", lava: "Лава", mountain: "Горы",
       };
       el.title.textContent = names[b.terrain] || "Клетка";
-      el.body.textContent = "Меняй биом кистями во вкладке «Мир».";
+      el.body.textContent = "Люди сами решают, что строить рядом.";
       el.bars.classList.add("hidden");
       return;
     }
@@ -352,7 +399,7 @@ function updateInspect() {
     };
     el.title.textContent = names[b.type] || "Здание";
     if (!b.done) {
-      el.body.textContent = "Строится…";
+      el.body.textContent = "Строится поселенцами…";
       el.bars.classList.remove("hidden");
       el.bars.innerHTML = `
         <div class="bar-row"><span>Прогресс</span><div class="bar bar--progress"><i style="width:${(b.progress * 100).toFixed(0)}%"></i></div></div>
@@ -367,31 +414,20 @@ function updateInspect() {
       el.body.textContent = "Стреляет по воинам Орды в радиусе.";
       el.bars.classList.add("hidden");
     } else if (b.type === "wall" || b.type === "gate") {
-      el.body.textContent = b.type === "gate" ? "Проход в стене. Можно штурмовать." : "Блокирует путь. Ломается в осаде.";
+      el.body.textContent = b.type === "gate" ? "Проход в стене." : "Блокирует путь.";
       el.bars.classList.remove("hidden");
       const max = b.type === "wall" ? 80 : 100;
       el.bars.innerHTML = `
         <div class="bar-row"><span>Прочность</span><div class="bar bar--hunger"><i style="width:${((b.hp / max) * 100).toFixed(0)}%"></i></div></div>
       `;
     } else if (b.type === "barracks") {
-      el.body.textContent = "Обучает солдат (кнопка «Солдат» во вкладке Война).";
+      el.body.textContent = "Колония сама готовит солдат при угрозе.";
       el.bars.classList.add("hidden");
     } else {
       el.body.textContent = b.type === "hut" ? "Укрытие на ночь" : "Общий склад";
       el.bars.classList.add("hidden");
     }
-    return;
   }
-
-  el.title.textContent = "Мир";
-  el.body.textContent = "Силы бога внизу. Кликни по существу или клетке.";
-  el.bars.classList.add("hidden");
-  el.bars.innerHTML = "";
-}
-
-function refreshRecruit() {
-  if (!api) return;
-  btnRecruit.disabled = !canRecruit(api.game);
 }
 
 function showToast(msg) {

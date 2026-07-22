@@ -7,6 +7,7 @@ import {
   TIME_LABELS,
 } from "./config.js";
 import { seedWildlife, updateCreatures } from "./creatures.js";
+import { updateColonyPlan } from "./colony.js";
 import {
   applyPower,
   BRUSH_TOOLS,
@@ -46,7 +47,8 @@ export function createGame(canvas) {
     tornadoes: [],
     stock: { food: 18, wood: 20, stone: 4 },
     tool: "select",
-    powerTab: "war",
+    powerTab: "life",
+    warSub: "build",
     brushSize: 1,
     war: createWarState(),
     speed: 1,
@@ -184,15 +186,15 @@ export function createGame(canvas) {
     onPointerDown(sx, sy);
   }
 
-  function recruit() {
+  function recruit({ quiet = false } = {}) {
     const homes = countBuildings(world, "hut", true);
     const alive = game.settlers.filter((s) => s.state !== "die").length;
     if (alive >= homes + 3) {
-      game.toast("Нужно больше домов");
+      if (!quiet) game.toast("Нужно больше домов");
       return false;
     }
     if (game.stock.food < RECRUIT_COST.food) {
-      game.toast("Не хватает еды");
+      if (!quiet) game.toast("Не хватает еды");
       return false;
     }
     game.stock.food -= RECRUIT_COST.food;
@@ -204,6 +206,9 @@ export function createGame(canvas) {
     game.toast(`${s.name} присоединился к поселению`);
     return true;
   }
+
+  // Colony planner uses this for autonomous population growth
+  game._recruit = () => recruit({ quiet: true });
 
   return {
     game,
@@ -254,6 +259,8 @@ function update(game, dt) {
       if (cell.kind) cell.amount = cell.kind === "tree" ? 3 : 2;
     }
   }
+
+  updateColonyPlan(game, dt);
 
   beginSettlerThink(game);
   for (const s of game.settlers) {
@@ -371,9 +378,10 @@ function selectAt(game, tx, ty) {
   const cell = game.world.resources[ty]?.[tx];
   game.selected = null;
   game.selectedCreature = null;
+  // Only open inspect for real things — bare tiles stay quiet
   game.selectedBuilding = cell?.kind
     ? { type: "resource", kind: cell.kind, amount: cell.amount, x: tx, y: ty }
-    : { type: "tile", terrain: game.world.terrain[ty][tx], x: tx, y: ty };
+    : null;
 }
 
 function findSpawn(game) {

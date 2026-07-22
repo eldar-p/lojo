@@ -18,7 +18,7 @@ export const POWER_TABS = {
   },
   life: {
     label: "Жизнь",
-    tools: ["spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit", "rain", "bless"],
+    tools: ["select", "spawn_human", "spawn_rabbit", "spawn_wolf", "spawn_bandit", "rain", "bless"],
   },
   war: {
     label: "Война",
@@ -34,10 +34,17 @@ export const POWER_TABS = {
     label: "Хаос",
     tools: ["lightning", "meteor", "fire", "bomb", "tornado", "death"],
   },
-  colony: {
-    label: "Поселение",
-    tools: ["select", "hut", "farm", "stockpile", "chop", "gather", "mine"],
-  },
+};
+
+/** War tab sub-filters — keeps the god bar usable */
+export const WAR_GROUPS = {
+  build: ["wall", "gate", "tower", "barracks", "train_soldier"],
+  doctrine: [
+    "stance_defend", "stance_raid", "stance_encircle", "stance_siege", "stance_breakthrough", "stance_ambush",
+    "stance_blitzkrieg", "stance_kessel", "stance_depth_defense", "stance_barrage", "stance_partisans",
+    "stance_attrition", "stance_elastic", "stance_night_raid", "stance_interdiction", "stance_shock",
+  ],
+  cmd: ["declare_war", "spawn_army", "make_peace"],
 };
 
 export const BRUSH_TOOLS = new Set([
