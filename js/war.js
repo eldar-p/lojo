@@ -1,6 +1,5 @@
 /**
- * Warfare & real-world inspired strategies — local JS only.
- * Strategies: defend, raid, encircle, siege, breakthrough, ambush.
+ * Warfare strategies — classical + WWII-inspired, local JS only.
  */
 
 import { MAP_H, MAP_W } from "./config.js";
@@ -8,37 +7,110 @@ import { createCreature } from "./creatures.js";
 import { inBounds, walkable } from "./world.js";
 
 export const STRATEGIES = {
+  // Classic
   defend: {
     id: "defend",
     name: "Оборона",
+    era: "classic",
     desc: "Держать стены и башни, не уходить далеко",
   },
   raid: {
     id: "raid",
     name: "Рейд",
+    era: "classic",
     desc: "Удар по складам и фермам, избегать башен",
   },
   encircle: {
     id: "encircle",
     name: "Охват",
+    era: "classic",
     desc: "Клещи: зайти с двух флангов",
   },
   siege: {
     id: "siege",
     name: "Осада",
+    era: "classic",
     desc: "Ломать башни, стены и казармы",
   },
   breakthrough: {
     id: "breakthrough",
     name: "Прорыв",
+    era: "classic",
     desc: "Сконцентрировать силу в слабой точке",
   },
   ambush: {
     id: "ambush",
     name: "Засада",
+    era: "classic",
     desc: "Ждать у леса, затем внезапный удар",
   },
+  // WWII
+  blitzkrieg: {
+    id: "blitzkrieg",
+    name: "Блицкриг",
+    era: "ww2",
+    desc: "Молниеносный удар: скорость, узкий клин в центр",
+  },
+  kessel: {
+    id: "kessel",
+    name: "Котёл",
+    era: "ww2",
+    desc: "Двойной охват и сжатие кольца (как у Сталинграда)",
+  },
+  depth_defense: {
+    id: "depth_defense",
+    name: "Эшелон",
+    era: "ww2",
+    desc: "Оборона в глубину: несколько линий отхода",
+  },
+  barrage: {
+    id: "barrage",
+    name: "Артналёт",
+    era: "ww2",
+    desc: "Сначала «обстрел» укреплений, потом штурм",
+  },
+  partisans: {
+    id: "partisans",
+    name: "Партизаны",
+    era: "ww2",
+    desc: "Удар из леса и отход — партизанская война",
+  },
+  attrition: {
+    id: "attrition",
+    name: "Измор",
+    era: "ww2",
+    desc: "Война на истощение: бить людей, не здания",
+  },
+  elastic: {
+    id: "elastic",
+    name: "Эластичная",
+    era: "ww2",
+    desc: "Ложный отход, затем контрудар",
+  },
+  night_raid: {
+    id: "night_raid",
+    name: "Ночной удар",
+    era: "ww2",
+    desc: "Атака ночью на склады и спящих",
+  },
+  interdiction: {
+    id: "interdiction",
+    name: "Блокада",
+    era: "ww2",
+    desc: "Резать снабжение: жечь фермы и подходы",
+  },
+  shock: {
+    id: "shock",
+    name: "Штурмовики",
+    era: "ww2",
+    desc: "Шоковые группы: яростный штурм слабого места",
+  },
 };
+
+export const WW2_STANCES = [
+  "blitzkrieg", "kessel", "depth_defense", "barrage", "partisans",
+  "attrition", "elastic", "night_raid", "interdiction", "shock",
+];
 
 export function createWarState() {
   return {
@@ -48,9 +120,12 @@ export function createWarState() {
     enemyName: "Орда",
     colonyName: "Поселение",
     battleLog: [],
-    pressure: 0, // 0..1 how active war is
+    pressure: 0,
     nextRaidIn: 45,
     wave: 0,
+    barrageTimer: 0,
+    elasticPhase: "hold", // hold | fall | strike
+    kesselTight: 0,
   };
 }
 
@@ -125,13 +200,25 @@ export function pickEnemyStrategy(game) {
   const defenders = game.settlers.filter((s) => s.state !== "die" && (s.military || s.brain?.role === "guard")).length;
   const towers = countBuildings(game, "tower");
   const walls = countBuildings(game, "wall");
-  const ratio = enemies / Math.max(1, defenders + towers);
+  const farms = countBuildings(game, "farm");
+  const ratio = enemies / Math.max(1, defenders + towers * 0.8);
+  const night = game.isNight;
+  const roll = Math.random();
 
-  if (towers + walls > 8 && ratio < 1.2) return "siege";
-  if (ratio >= 1.8) return "breakthrough";
-  if (ratio >= 1.2) return Math.random() < 0.5 ? "encircle" : "raid";
-  if (defenders > enemies) return Math.random() < 0.5 ? "ambush" : "raid";
-  return "raid";
+  // Prefer WWII doctrines mixed with classic
+  if (night && roll < 0.45) return "night_raid";
+  if (towers + walls > 10 && ratio < 1.3) return roll < 0.5 ? "barrage" : "siege";
+  if (ratio >= 2.0) return roll < 0.55 ? "blitzkrieg" : "shock";
+  if (ratio >= 1.5) return roll < 0.4 ? "kessel" : roll < 0.7 ? "encircle" : "breakthrough";
+  if (farms >= 3 && roll < 0.35) return "interdiction";
+  if (defenders > enemies) {
+    if (roll < 0.3) return "partisans";
+    if (roll < 0.55) return "ambush";
+    if (roll < 0.75) return "elastic";
+    return "attrition";
+  }
+  if (walls > 6 && ratio < 1) return "depth_defense";
+  return roll < 0.5 ? "raid" : "attrition";
 }
 
 function countBuildings(game, type) {
@@ -168,14 +255,80 @@ export function updateWar(game, dt) {
 
   const stance = game.war.enemyStance || "raid";
   const objectives = gatherObjectives(game);
+
+  // Global stance timers
+  if (stance === "barrage") {
+    game.war.barrageTimer = (game.war.barrageTimer || 0) + dt;
+    if (game.war.barrageTimer < 6) {
+      runBarrageSoftening(game, dt, objectives);
+    }
+  } else {
+    game.war.barrageTimer = 0;
+  }
+
+  if (stance === "elastic") {
+    updateElasticPhase(game, enemies, objectives);
+  }
+
+  if (stance === "kessel") {
+    game.war.kesselTight = Math.min(8, (game.war.kesselTight || 0) + dt * 0.15);
+  } else {
+    game.war.kesselTight = 0;
+  }
+
   assignStrategyOrders(game, enemies, stance, objectives);
 
   for (const e of enemies) {
+    // WWII speed modifiers
+    if (stance === "blitzkrieg" || stance === "shock") e._spdMul = 1.35;
+    else if (stance === "partisans") e._spdMul = 1.15;
+    else if (stance === "attrition") e._spdMul = 0.85;
+    else e._spdMul = 1;
+
     executeSoldier(e, game, dt);
   }
 
-  // Colony military follow stance lightly via brain pressure flag
   game.war.pressure = Math.min(1, enemies.length / 10);
+}
+
+function runBarrageSoftening(game, dt, obj) {
+  // "Artillery": chip fortifications before infantry closes
+  const targets = [...obj.towers, ...obj.walls, ...obj.gates, ...obj.barracks];
+  if (!targets.length) return;
+  if (Math.random() > dt * 4) return;
+  const b = targets[(Math.random() * targets.length) | 0];
+  damageBuilding(game, b, 8 + Math.random() * 10);
+  game.fx.push({
+    kind: "bomb",
+    x: b.x + 0.5,
+    y: b.y + 0.5,
+    life: 0.35,
+    max: 0.35,
+    seed: Math.random() * 100,
+  });
+}
+
+function updateElasticPhase(game, enemies, obj) {
+  const center = colonyCenter(obj);
+  let near = 0;
+  for (const e of enemies) {
+    if (Math.hypot(e.x - center.x, e.y - center.y) < 8) near++;
+  }
+  const phase = game.war.elasticPhase || "hold";
+  if (phase === "hold" && near >= Math.max(2, enemies.length * 0.4)) {
+    game.war.elasticPhase = "fall";
+    pushLog(game, "Эластичная оборона: отход");
+  } else if (phase === "fall") {
+    // After falling back, strike
+    const far = enemies.filter((e) => Math.hypot(e.x - center.x, e.y - center.y) > 10).length;
+    if (far >= enemies.length * 0.5) {
+      game.war.elasticPhase = "strike";
+      pushLog(game, "Эластичная оборона: контрудар!");
+    }
+  } else if (phase === "strike") {
+    // Reset after pressure drops
+    if (near < 1) game.war.elasticPhase = "hold";
+  }
 }
 
 function randomMapEdge() {
@@ -212,17 +365,27 @@ function gatherObjectives(game) {
 function assignStrategyOrders(game, enemies, stance, obj) {
   const center = colonyCenter(obj);
   const half = Math.ceil(enemies.length / 2);
+  const third = Math.ceil(enemies.length / 3);
+  const tight = game.war.kesselTight || 0;
 
   enemies.forEach((e, i) => {
     if (e.order && e.order.ttl > 0) return;
+    e.avoidTowers = false;
+    e.hitAndRun = false;
 
-    if (stance === "defend") {
-      // Hold near their spawn / map edge — rare for invaders; treat as cautious raid
-      e.order = orderToward(weakSettler(obj) || center, "attack_unit", 3);
+    if (stance === "defend" || stance === "depth_defense") {
+      // Depth: hold staggered rings around edge of colony pressure
+      const ring = stance === "depth_defense" ? 10 - (i % 3) * 2.5 : 8;
+      const ang = (i / Math.max(1, enemies.length)) * Math.PI * 2;
+      e.order = {
+        type: "hold_line",
+        x: center.x + Math.cos(ang) * ring,
+        y: center.y + Math.sin(ang) * ring,
+        ttl: 3.5,
+      };
     } else if (stance === "raid") {
       const target = obj.stock[0] || obj.farms[0] || weakSettler(obj) || center;
       e.order = orderToward(target, target?.type ? "raid_building" : "attack_unit", 4);
-      // Avoid towers: if near tower, path offset
       e.avoidTowers = true;
     } else if (stance === "encircle") {
       const flank = i < half ? -1 : 1;
@@ -230,12 +393,101 @@ function assignStrategyOrders(game, enemies, stance, obj) {
       const ty = center.y + (i % 2 === 0 ? -3 : 3);
       e.order = { type: "flank", x: tx, y: ty, then: "attack_unit", ttl: 5 };
       e.flankPhase = "approach";
+    } else if (stance === "kessel") {
+      // Double pincer that tightens over time
+      const wing = i < half ? -1 : 1;
+      const radius = Math.max(2.5, 9 - tight);
+      const slot = (i % half) / Math.max(1, half);
+      const ang = wing < 0
+        ? -Math.PI * 0.2 - slot * Math.PI * 0.8
+        : Math.PI * 0.2 + slot * Math.PI * 0.8;
+      e.order = {
+        type: "kessel",
+        x: center.x + Math.cos(ang) * radius * wing,
+        y: center.y + Math.sin(ang) * radius,
+        ttl: 2.5,
+      };
+      e.flankPhase = radius < 4 ? "squeeze" : "approach";
     } else if (stance === "siege") {
       const target = obj.towers[0] || obj.barracks[0] || obj.walls[0] || obj.gates[0] || center;
       e.order = orderToward(target, "siege_building", 5);
-    } else if (stance === "breakthrough") {
+    } else if (stance === "breakthrough" || stance === "shock") {
       const weak = weakestPoint(obj, center);
-      e.order = orderToward(weak, "breakthrough", 4);
+      e.order = orderToward(weak, stance === "shock" ? "shock_assault" : "breakthrough", 4);
+    } else if (stance === "blitzkrieg") {
+      // Narrow spearhead: most go to center/stock; few screen flanks
+      if (i < third) {
+        const flank = i % 2 === 0 ? -1 : 1;
+        e.order = {
+          type: "flank",
+          x: center.x + flank * 5,
+          y: center.y,
+          ttl: 3,
+        };
+        e.flankPhase = "approach";
+      } else {
+        const tip = obj.stock[0] || obj.barracks[0] || center;
+        e.order = orderToward(tip, "blitz", 3.5);
+      }
+    } else if (stance === "barrage") {
+      if ((game.war.barrageTimer || 0) < 6) {
+        // Wait outside while "shells" fall
+        const ang = (i / enemies.length) * Math.PI * 2;
+        e.order = {
+          type: "hold_line",
+          x: center.x + Math.cos(ang) * 11,
+          y: center.y + Math.sin(ang) * 11,
+          ttl: 1.2,
+        };
+      } else {
+        const weak = weakestPoint(obj, center);
+        e.order = orderToward(weak, "shock_assault", 4);
+      }
+    } else if (stance === "partisans") {
+      if (e.ambushReady && e.partisanStrike) {
+        e.order = orderToward(obj.farms[i % Math.max(1, obj.farms.length)] || weakSettler(obj) || center, "raid_building", 2.5);
+        e.hitAndRun = true;
+      } else {
+        const forest = nearestForest(game, e.x, e.y) || { x: e.x, y: e.y };
+        e.order = { type: "ambush_wait", x: forest.x, y: forest.y, ttl: 4 };
+        e.partisanStrike = false;
+      }
+    } else if (stance === "attrition") {
+      const target = weakSettler(obj) || obj.settlers[i % Math.max(1, obj.settlers.length)] || center;
+      e.order = orderToward(target, "attack_unit", 3.5);
+    } else if (stance === "elastic") {
+      const phase = game.war.elasticPhase || "hold";
+      if (phase === "fall") {
+        const edge = { x: e.x < center.x ? 4 : MAP_W - 5, y: e.y < center.y ? 4 : MAP_H - 5 };
+        e.order = { type: "fall_back", x: edge.x, y: edge.y, ttl: 2.5 };
+      } else if (phase === "strike") {
+        e.order = orderToward(weakSettler(obj) || center, "shock_assault", 3);
+      } else {
+        const ang = (i / enemies.length) * Math.PI * 2;
+        e.order = {
+          type: "hold_line",
+          x: center.x + Math.cos(ang) * 7,
+          y: center.y + Math.sin(ang) * 7,
+          ttl: 2,
+        };
+      }
+    } else if (stance === "night_raid") {
+      const target = game.isNight
+        ? (obj.stock[0] || sleepingSettler(obj) || weakSettler(obj) || center)
+        : (nearestForest(game, e.x, e.y) || { x: e.x, y: e.y });
+      e.order = game.isNight
+        ? orderToward(target, target?.type ? "raid_building" : "attack_unit", 3)
+        : { type: "ambush_wait", x: target.x, y: target.y, ttl: 3 };
+      if (game.isNight) e._spdMul = 1.25;
+    } else if (stance === "interdiction") {
+      // Burn farms / linger on approaches
+      const farm = obj.farms[i % Math.max(1, obj.farms.length)];
+      if (farm) {
+        e.order = orderToward(farm, "scorch_farm", 4);
+      } else {
+        e.order = orderToward(obj.stock[0] || center, "raid_building", 4);
+      }
+      e.avoidTowers = true;
     } else if (stance === "ambush") {
       if (e.ambushReady) {
         e.order = orderToward(weakSettler(obj) || center, "attack_unit", 3);
@@ -246,20 +498,26 @@ function assignStrategyOrders(game, enemies, stance, obj) {
     }
   });
 
-  // Ambush trigger: if any settler near waiting ambushers
-  if (stance === "ambush") {
+  // Ambush / partisan triggers
+  if (stance === "ambush" || stance === "partisans") {
     for (const e of enemies) {
       if (e.order?.type !== "ambush_wait") continue;
       for (const s of obj.settlers) {
-        if (Math.hypot(s.x - e.x, s.y - e.y) < 5) {
+        const range = stance === "partisans" ? 6.5 : 5;
+        if (Math.hypot(s.x - e.x, s.y - e.y) < range) {
           e.ambushReady = true;
+          e.partisanStrike = stance === "partisans";
           e.order = orderToward(s, "attack_unit", 3);
-          pushLog(game, "Засада!");
+          pushLog(game, stance === "partisans" ? "Партизанский удар!" : "Засада!");
           break;
         }
       }
     }
   }
+}
+
+function sleepingSettler(obj) {
+  return obj.settlers.find((s) => s.state === "sleep") || null;
 }
 
 function orderToward(target, type, ttl) {
@@ -335,56 +593,92 @@ function executeSoldier(e, game, dt) {
   const order = e.order;
   if (!order) return;
   order.ttl -= dt;
+  const spd = e.speed * (e._spdMul || 1);
 
-  // Combat vs settlers / colony soldiers
+  // Combat vs settlers
   const foe = nearestFoe(game, e);
+  const aggressive = ["attack_unit", "breakthrough", "flank", "blitz", "shock_assault", "kessel"].includes(order.type);
   if (foe && Math.hypot(foe.x - e.x, foe.y - e.y) < 1.1) {
-    melee(e, foe, game);
+    const dmgMul = order.type === "shock_assault" ? 1.35 : order.type === "blitz" ? 1.2 : 1;
+    melee(e, foe, game, dmgMul);
+    // Partisan hit-and-run: after a hit, fall back to forest
+    if (e.hitAndRun) {
+      const forest = nearestForest(game, e.x, e.y);
+      if (forest) {
+        e.order = { type: "fall_back", x: forest.x, y: forest.y, ttl: 3 };
+        e.ambushReady = false;
+        e.partisanStrike = false;
+        e.hitAndRun = false;
+      }
+    }
     return;
   }
 
   let tx = order.x;
   let ty = order.y;
 
-  if (order.type === "flank" && e.flankPhase === "approach") {
+  if ((order.type === "flank" || order.type === "kessel") && e.flankPhase === "approach") {
     if (Math.hypot(e.x - tx, e.y - ty) < 1.5) {
-      e.flankPhase = "strike";
+      e.flankPhase = order.type === "kessel" ? "squeeze" : "strike";
       const c = colonyCenter(gatherObjectives(game));
       tx = c.x;
       ty = c.y;
       order.x = tx;
       order.y = ty;
-      order.type = "attack_unit";
+      if (order.type !== "kessel") order.type = "attack_unit";
     }
   }
 
-  if (order.type === "ambush_wait") {
-    // Hold / micro move
-    if (Math.hypot(e.x - tx, e.y - ty) > 1.2) moveSoldier(e, game, tx, ty, dt, e.speed * 0.7);
+  if (order.type === "kessel" && e.flankPhase === "squeeze") {
+    const c = colonyCenter(gatherObjectives(game));
+    tx = c.x;
+    ty = c.y;
+  }
+
+  if (order.type === "ambush_wait" || order.type === "hold_line") {
+    if (Math.hypot(e.x - tx, e.y - ty) > 1.2) moveSoldier(e, game, tx, ty, dt, spd * 0.75);
+    // Hold_line still fights if enemy walks into them
+    if (order.type === "hold_line" && foe && Math.hypot(foe.x - e.x, foe.y - e.y) < 2.2) {
+      moveSoldier(e, game, foe.x, foe.y, dt, spd);
+    }
     return;
   }
 
-  // Siege: attack building when close
-  if ((order.type === "siege_building" || order.type === "raid_building" || order.type === "breakthrough") && order.target) {
+  if (order.type === "fall_back") {
+    moveSoldier(e, game, tx, ty, dt, spd * 1.2);
+    return;
+  }
+
+  // Building assault / scorched earth
+  const buildOrders = ["siege_building", "raid_building", "breakthrough", "shock_assault", "blitz", "scorch_farm"];
+  if (buildOrders.includes(order.type) && order.target) {
     const b = order.target;
     const d = Math.hypot(b.x + 0.5 - e.x, b.y + 0.5 - e.y);
     if (d < 1.4) {
-      damageBuilding(game, b, 12 * dt * (order.type === "siege_building" ? 1.4 : 1));
+      let mul = 1;
+      if (order.type === "siege_building") mul = 1.4;
+      if (order.type === "shock_assault") mul = 1.55;
+      if (order.type === "blitz") mul = 1.3;
+      if (order.type === "scorch_farm") mul = 1.8;
+      damageBuilding(game, b, 12 * dt * mul);
+      // Scorch: also ignite tile
+      if (order.type === "scorch_farm" && game.world.fire?.[b.y]) {
+        game.world.fire[b.y][b.x] = Math.max(game.world.fire[b.y][b.x], 0.85);
+      }
       e.cooldown = 0.2;
       return;
     }
   }
 
-  // Chase nearby foe during attack orders
-  if (foe && ["attack_unit", "breakthrough", "flank"].includes(order.type)) {
+  if (foe && aggressive) {
     const d = Math.hypot(foe.x - e.x, foe.y - e.y);
-    if (d < 7) {
+    const chaseR = order.type === "blitz" || order.type === "shock_assault" ? 9 : 7;
+    if (d < chaseR) {
       tx = foe.x;
       ty = foe.y;
     }
   }
 
-  // Avoid towers when raiding
   if (e.avoidTowers) {
     const tower = nearestTower(game, e.x, e.y, 5);
     if (tower) {
@@ -394,7 +688,7 @@ function executeSoldier(e, game, dt) {
     }
   }
 
-  moveSoldier(e, game, tx, ty, dt, e.speed);
+  moveSoldier(e, game, tx, ty, dt, spd);
 }
 
 function nearestFoe(game, e) {
@@ -428,11 +722,11 @@ function nearestTower(game, x, y, maxD) {
   return best;
 }
 
-function melee(a, b, game) {
+function melee(a, b, game, dmgMul = 1) {
   if (a.cooldown > 0) return;
   a.cooldown = 0.85;
   const flankBonus = alliesBeside(game, a, b) >= 2 ? 1.35 : 1;
-  const dmg = a.damage * flankBonus;
+  const dmg = a.damage * flankBonus * dmgMul;
   if (b.kind) {
     b.hp -= dmg;
     if (b.hp <= 0) b.dead = true;

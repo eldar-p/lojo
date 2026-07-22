@@ -237,16 +237,31 @@ export function decideGoal(s, game, sense) {
   const stance = game.war?.colonyStance;
   const atWar = game.war?.atWar || sense.threats.some((t) => t.kind === "soldier");
   if (atWar && (s.military || role === "guard" || traits.bravery > 0.6)) {
-    if (stance === "defend") {
-      goals.push({ type: "hold_wall", score: 75 + sense.threats.length * 6, thought: "держит оборону" });
-    } else if (stance === "raid" || stance === "breakthrough") {
-      goals.push({ type: "fight", score: 85 + traits.bravery * 30, thought: "идёт в атаку", payload: { targetId: threat?.unit?.id } });
-    } else if (stance === "encircle") {
-      goals.push({ type: "flank_move", score: 80, thought: "заходит с фланга" });
-    } else if (stance === "ambush") {
-      goals.push({ type: "ambush_pos", score: 70, thought: "готовит засаду" });
-    } else if (stance === "siege") {
-      goals.push({ type: "fight", score: 78, thought: "давит на врага", payload: { targetId: threat?.unit?.id } });
+    if (stance === "defend" || stance === "depth_defense") {
+      goals.push({ type: "hold_wall", score: 75 + sense.threats.length * 6, thought: stance === "depth_defense" ? "эшелон обороны" : "держит оборону" });
+    } else if (stance === "raid" || stance === "breakthrough" || stance === "blitzkrieg" || stance === "shock") {
+      goals.push({
+        type: "fight",
+        score: 85 + traits.bravery * 30 + (stance === "blitzkrieg" ? 12 : 0),
+        thought: stance === "blitzkrieg" ? "клин блицкрига" : stance === "shock" ? "идёт на штурм" : "идёт в атаку",
+        payload: { targetId: threat?.unit?.id },
+      });
+    } else if (stance === "encircle" || stance === "kessel") {
+      goals.push({ type: "flank_move", score: 82, thought: stance === "kessel" ? "сжимает котёл" : "заходит с фланга" });
+    } else if (stance === "ambush" || stance === "partisans" || stance === "night_raid") {
+      goals.push({ type: "ambush_pos", score: 72 + (sense.isNight && stance === "night_raid" ? 20 : 0), thought: stance === "partisans" ? "партизанит" : "готовит засаду" });
+    } else if (stance === "siege" || stance === "barrage") {
+      goals.push({ type: "fight", score: 78, thought: stance === "barrage" ? "ждёт артналёт" : "давит на врага", payload: { targetId: threat?.unit?.id } });
+    } else if (stance === "attrition") {
+      goals.push({ type: "fight", score: 80, thought: "изматывает врага", payload: { targetId: threat?.unit?.id } });
+    } else if (stance === "elastic") {
+      goals.push({ type: "hold_wall", score: 70, thought: "эластичная линия" });
+      if (threat && threat.dist < 4) {
+        goals.push({ type: "flee", score: 88, thought: "отходит с боем", payload: { fromId: threat.unit.id } });
+      }
+    } else if (stance === "interdiction") {
+      goals.push({ type: "patrol", score: 76, thought: "прикрывает снабжение" });
+      if (threat) goals.push({ type: "fight", score: 84, thought: "бьёт диверсантов", payload: { targetId: threat.unit.id } });
     }
   }
 

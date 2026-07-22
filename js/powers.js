@@ -25,6 +25,8 @@ export const POWER_TABS = {
     tools: [
       "wall", "gate", "tower", "barracks", "train_soldier",
       "stance_defend", "stance_raid", "stance_encircle", "stance_siege", "stance_breakthrough", "stance_ambush",
+      "stance_blitzkrieg", "stance_kessel", "stance_depth_defense", "stance_barrage", "stance_partisans",
+      "stance_attrition", "stance_elastic", "stance_night_raid", "stance_interdiction", "stance_shock",
       "declare_war", "spawn_army", "make_peace",
     ],
   },
@@ -50,6 +52,8 @@ export const CLICK_POWERS = new Set([
   "spawn_army", "declare_war", "make_peace", "train_soldier",
   "stance_defend", "stance_raid", "stance_encircle", "stance_siege",
   "stance_breakthrough", "stance_ambush",
+  "stance_blitzkrieg", "stance_kessel", "stance_depth_defense", "stance_barrage", "stance_partisans",
+  "stance_attrition", "stance_elastic", "stance_night_raid", "stance_interdiction", "stance_shock",
 ]);
 
 export function forBrush(cx, cy, radius, fn) {
