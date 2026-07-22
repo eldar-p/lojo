@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LOJO — Поселение</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="boot" class="boot">
+    <div class="boot__atmosphere" aria-hidden="true"></div>
+    <div class="boot__content">
+      <p class="boot__brand">LOJO</p>
+      <h1 class="boot__title">Маленький мир больших дел</h1>
+      <p class="boot__lead">Поселенцы рубят лес, собирают ягоды, строят дома и переживают ночь. Ты задаёшь курс — они живут.</p>
+      <div class="boot__actions">
+        <button type="button" id="btn-start" class="btn btn--primary">Начать поселение</button>
+        <button type="button" id="btn-howto" class="btn btn--ghost">Как играть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="howto" class="modal hidden" role="dialog" aria-labelledby="howto-title">
+    <div class="modal__panel">
+      <h2 id="howto-title">Как играть</h2>
+      <ul>
+        <li><strong>ЛКМ</strong> — поставить здание или выделить объект</li>
+        <li><strong>ПКМ / перетаскивание</strong> — двигать камеру</li>
+        <li><strong>Колёсико</strong> — масштаб</li>
+        <li><strong>WASD</strong> — панорама</li>
+        <li>Поселенцы сами едят, спят и берут работу из очереди</li>
+        <li>Дома дают укрытие ночью, фермы — еду, склады хранят ресурсы</li>
+      </ul>
+      <button type="button" id="btn-howto-close" class="btn btn--primary">Понятно</button>
+    </div>
+  </div>
+
+  <div id="game-shell" class="game-shell hidden">
+    <header class="hud-top">
+      <div class="brand-mark">LOJO</div>
+      <div class="res-bar" id="res-bar">
+        <span class="res" data-res="food" title="Еда"><i class="ico ico-food"></i><b id="res-food">0</b></span>
+        <span class="res" data-res="wood" title="Дерево"><i class="ico ico-wood"></i><b id="res-wood">0</b></span>
+        <span class="res" data-res="stone" title="Камень"><i class="ico ico-stone"></i><b id="res-stone">0</b></span>
+        <span class="res" data-res="people" title="Люди"><i class="ico ico-people"></i><b id="res-people">0</b></span>
+      </div>
+      <div class="clock">
+        <span id="day-label">День 1</span>
+        <span id="time-label">Утро</span>
+        <div class="day-meter"><div id="day-fill" class="day-meter__fill"></div></div>
+      </div>
+    </header>
+
+    <canvas id="world" width="1280" height="720"></canvas>
+
+    <aside class="hud-side">
+      <p class="hud-side__label">Строить</p>
+      <div class="tool-grid" id="tools">
+        <button type="button" class="tool active" data-tool="select" title="Выбор"><span class="tool-ico tool-ico--select"></span><span>Выбор</span></button>
+        <button type="button" class="tool" data-tool="hut" title="Домик — 12 дерева"><span class="tool-ico tool-ico--hut"></span><span>Домик</span></button>
+        <button type="button" class="tool" data-tool="farm" title="Грядка — 6 дерева"><span class="tool-ico tool-ico--farm"></span><span>Грядка</span></button>
+        <button type="button" class="tool" data-tool="stockpile" title="Склад — 8 дерева"><span class="tool-ico tool-ico--stock"></span><span>Склад</span></button>
+        <button type="button" class="tool" data-tool="chop" title="Рубить дерево"><span class="tool-ico tool-ico--chop"></span><span>Рубка</span></button>
+        <button type="button" class="tool" data-tool="gather" title="Собрать ягоды"><span class="tool-ico tool-ico--gather"></span><span>Ягоды</span></button>
+        <button type="button" class="tool" data-tool="mine" title="Добыть камень"><span class="tool-ico tool-ico--mine"></span><span>Камень</span></button>
+      </div>
+      <p class="hud-side__hint" id="tool-hint">Выбери действие и кликни по карте</p>
+
+      <p class="hud-side__label">Скорость</p>
+      <div class="speed-row">
+        <button type="button" class="speed" data-speed="0" title="Пауза">II</button>
+        <button type="button" class="speed active" data-speed="1" title="Обычная">1x</button>
+        <button type="button" class="speed" data-speed="2" title="Быстрее">2x</button>
+        <button type="button" class="speed" data-speed="3" title="Очень быстро">3x</button>
+      </div>
+
+      <button type="button" id="btn-recruit" class="btn btn--recruit">Призвать поселенца<br /><small>20 еды · нужен дом</small></button>
+    </aside>
+
+    <section class="inspect" id="inspect">
+      <h3 id="inspect-title">Поселение</h3>
+      <p id="inspect-body">Кликни по человеку или зданию, чтобы узнать детали.</p>
+      <div id="inspect-bars" class="inspect-bars hidden"></div>
+    </section>
+
+    <div class="toast-stack" id="toasts" aria-live="polite"></div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
